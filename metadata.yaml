@@ -1,0 +1,5 @@
+name: astrbot_plugin_lang_learning
+desc: 外语学习 —— 四语词库/语法库（Anki 导入导出）· 定时推送 · 群里答题（按钮作答）· 日语新闻采集推送 · QQ 群命令 · 可视化面板
+version: v1.0.0
+author: malu
+repo: https://github.com/malu-no996/astrbot-plugin-lang-learning

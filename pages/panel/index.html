@@ -1,0 +1,1638 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <title>外语学习面板</title>
+    <link rel="stylesheet" href="./css/base.css">
+    <link rel="stylesheet" href="./css/style.css">
+    <link rel="stylesheet" href="./css/frag/news.css">
+</head>
+<body>
+    <div id="app">
+<!-- 外语学习模块页面（plugins/_vendor/langstudy/web/partial.html）
+
+     骨架只放：标题 + 模块开关 + **语言一排**（英语/日语/韩语/泰语）+ **子页签一排**
+     （单词管理 / 语法管理 / 题库管理 / 答题推送 / 单词/语法推送 / 命令配置），
+     子页面各自是 frag/ 下的三件套：
+
+       单词管理   frag/vocab.*      window.LsVocab      ← 由 items-core 提供通用词表逻辑
+       语法管理   frag/grammar.*    window.LsGrammar    ← 同上（同一套逻辑，换 key）
+       题库管理   frag/bank.html                     ← 只有 html；逻辑与答题推送共用 window.LsQuiz
+       答题推送   frag/quiz.*       window.LsQuiz       ← 出题规则（题库在上一页）
+       单词/语法推送 frag/push.*     window.LsPush
+       命令配置   frag/commands.*   window.LsCommands   ← 触发词集中改（写回各自规则 / 菜单配置）
+       编辑浮层   frag/editor.*     window.LsEditor     ← 浮层必须挂在"子页 v-show 容器"之外，
+                                                          否则父元素 display:none 时 position:fixed 也看不见
+
+     单词页与语法页的字段结构完全一致（只有页面文案不同），所以逻辑写在共同的
+     frag/items-core.js 里，vocab.js / grammar.js 各用不同 key 包一层，避免两份拷贝。
+
+     共享状态 ls（当前语言 / 当前子页 / 计数）与工具在 module.js。 -->
+    <div class="card">
+      <h2>
+        外语学习 <span class="hint">单词 / 语法 · Anki 导入导出 · QQ 定时推送</span>
+        <span class="ls-mod-switch">
+          <label class="ls-switch">
+            <input type="checkbox" :checked="ls.mod.on"
+                   :disabled="ls.mod.busy" @change="lsModToggle($event.target.checked)">
+            <span :style="ls.mod.on ? 'color:var(--ok)' : 'color:var(--err)'">
+              {{ ls.mod.on ? '模块已启用' : '模块已禁用' }}
+            </span>
+          </label>
+        </span>
+      </h2>
+
+      <div class="warn" v-if="!ls.mod.on">
+        外语学习模块当前<strong>已禁用</strong>：所有接口返回 404、后台推送循环空转（不推消息）。
+        词库与推送规则都会保留，勾选上面的开关即可重新启用。
+      </div>
+      <p v-if="ls.mod.message" class="muted" :style="ls.mod.ok ? '' : 'color:var(--err)'">{{ ls.mod.message }}</p>
+
+      <!-- 一级分类：语言（四种语言各自独立的词库 / 语法库 / 推送规则） -->
+      <nav class="tabs ls-langs">
+        <span v-for="l in lsLangs" :key="l.key" class="tab" :class="{active: ls.lang===l.key}" @click="lsLangTo(l.key)">
+          {{ l.label }}
+          <span class="badge online" v-if="lsCount(l.key,'vocab') || lsCount(l.key,'grammar')">
+            {{ lsCount(l.key,'vocab') + lsCount(l.key,'grammar') }}
+          </span>
+        </span>
+      </nav>
+
+      <p class="muted ls-status">
+        当前：<strong>{{ lsLangLabel() }}</strong> · 单词 {{ lsCount(ls.lang,'vocab') }} 条 ·
+        语法 {{ lsCount(ls.lang,'grammar') }} 条 · 推送规则 {{ lsRuleCount(ls.lang) }} 条
+      </p>
+
+      <!-- 二级页签：单词 / 语法 / 题库 / 答题推送 / 单词/语法推送 / 命令配置（顺序 = 下面几行的先后） -->
+      <nav class="tabs ls-subs">
+        <span class="tab" :class="{active: ls.tab==='vocab'}" @click="lsTabTo('vocab')">单词管理</span>
+        <span class="tab" :class="{active: ls.tab==='grammar'}" @click="lsTabTo('grammar')">语法管理</span>
+        <span class="tab" :class="{active: ls.tab==='bank'}" @click="lsTabTo('bank')">
+          题库管理<span v-if="ls.quiz.total" class="badge online" style="margin-left:6px">{{ ls.quiz.total }}</span>
+        </span>
+        <span class="tab" :class="{active: ls.tab==='quiz'}" @click="lsTabTo('quiz')">答题推送</span>
+        <span class="tab" :class="{active: ls.tab==='push'}" @click="lsTabTo('push')">
+          单词/语法推送<span v-if="lsRuleCount(ls.lang)" class="badge online" style="margin-left:6px">{{ lsRuleCount(ls.lang) }}</span>
+        </span>
+        <span class="tab" :class="{active: ls.tab==='news'}" @click="lsTabTo('news')">新闻推送</span>
+        <span class="tab" :class="{active: ls.tab==='commands'}" @click="lsTabTo('commands')">命令配置</span>
+      </nav>
+
+      <!-- frag/vocab.html —— 单词管理（增删改查 + 搜索过滤 + Anki/ZIP 导入导出）
+     与 grammar.html 结构一致，只有文案与绑定的 key 不同（ls.vocab / lsGrammar*）。 -->
+<div v-show="ls.tab==='vocab'">
+  <div class="ls-toolbar">
+    <input class="ls-input ls-grow" v-model="ls.vocab.q" @keyup.enter="lsVocabSearch()"
+           placeholder="搜单词 / 读音 / 释义 / 例句 / 标签 / 分组 …（回车或点搜索）">
+    <button @click="lsVocabSearch()">搜索</button>
+    <select class="ls-input" v-model="ls.vocab.group" @change="lsVocabSearch($event, 'group')">
+      <option value="">全部分组</option>
+      <option v-for="g in ls.vocab.groups" :key="g.group || '__none__'"
+              :value="g.group ? g.group : '__none__'">
+        {{ g.group || '未分组' }}（{{ g.count }}）
+      </option>
+    </select>
+    <select class="ls-input" v-model="ls.vocab.tag" @change="lsVocabSearch($event, 'tag')">
+      <option value="">全部标签</option>
+      <option v-for="t in ls.vocab.tags" :key="t" :value="t">{{ t }}</option>
+    </select>
+    <select class="ls-input" v-model="ls.vocab.level" @change="lsVocabSearch($event, 'level')">
+      <option value="">全部等级</option>
+      <option v-for="l in ls.vocab.levels" :key="l" :value="l">{{ l }}</option>
+    </select>
+    <select class="ls-input" v-model="ls.vocab.sort" @change="lsVocabSearch($event, 'sort')">
+      <option value="updated">最近修改</option>
+      <option value="added">最近添加</option>
+      <option value="term">按字词</option>
+    </select>
+    <button @click="lsVocabReset()">重置</button>
+  </div>
+
+  <div class="ls-toolbar">
+    <button @click="lsVocabEditOpen(null)">+ 新增单词</button>
+    <button @click="lsVocabChooseFile()">导入文件 / ZIP</button>
+    <input :id="'ls-vocab-file'" type="file" accept=".zip,.apkg,.csv,.txt,.json" hidden
+           @change="lsVocabPickFile($event)">
+    <button @click="lsVocabExport('all')">导出全部（Anki 可用）</button>
+    <button @click="lsVocabExport('query')">导出当前筛选</button>
+    <span class="muted">
+      共 {{ ls.vocab.total }} 条 · 第 {{ ls.vocab.page }}/{{ ls.vocab.pages }} 页
+    </span>
+  </div>
+
+  <!-- 分组操作：选中某个分组后才出现（一次导入 = 一个分组，改名/删组都在这里） -->
+  <div class="ls-toolbar ls-groupbar" v-if="ls.vocab.group">
+    <span class="muted">已选分组：<b>{{ ls.vocab.group === '__none__' ? '未分组' : ls.vocab.group }}</b></span>
+    <input class="ls-input" v-model="ls.vocab.renameTo" placeholder="改成新的分组名"
+           @keyup.enter="lsVocabRenameGroup()">
+    <button @click="lsVocabRenameGroup()">重命名分组</button>
+    <button @click="lsVocabDeleteGroup()" :class="{'ls-btn-danger': ls.vocab.delGroup}">
+      {{ ls.vocab.delGroup ? '点此确认删除整组' : '删除整组' }}
+    </button>
+  </div>
+
+  <div class="guide">
+    <p class="guide-title">支持哪些文件</p>
+    <ul class="guide-list">
+      <li><b>.apkg</b> —— Anki 卡包（自动读里面的 SQLite 笔记表）</li>
+      <li><b>.zip</b> —— 包里可以有 csv / txt / json / 甚至多个 .apkg</li>
+      <li><b>.csv / .txt</b> —— 制表符或逗号分隔，有表头就按表头映射（中英文列名都认）</li>
+      <li><b>.json</b> —— <code>{"items":[{...}]}</code> 或数组</li>
+    </ul>
+    <p class="guide-note">
+      导出是<b>制表符分隔</b>的文本：term / reading / meaning / example / example_trans / tags / level / group，
+      Anki 的「文件导入」选它就完事，<b>再导回来也会回到原来的分组</b>。
+    </p>
+    <p class="guide-note">
+      <b>分组</b>：每次导入的条目会自动归到一个分组，名字默认取<b>文件名</b>
+      （<code>xxxN1单词.apkg</code> → 分组「xxxN1单词」；一个 zip 里多份词表时各自用自己的文件名），
+      也可以在下面的预览框里改。分组能用来筛选、整组改名 / 删除，也能让 QQ 推送「只从某几个分组抽词」。
+    </p>
+  </div>
+
+  <!-- 导入预览：先看识别成啥样，确认后才真正写库（导错了没法撤销） -->
+  <div class="local-box" v-if="ls.vocab.preview">
+    <div class="ls-preview-head">
+      <b>导入预览</b>
+      <span class="muted">{{ ls.vocab.preview.name }} · 解析出 {{ ls.vocab.preview.total }} 条</span>
+    </div>
+    <table class="ls-table">
+      <thead>
+        <tr><th>分组</th><th>词条</th><th>读音</th><th>释义</th><th>例句</th><th>标签</th><th>等级</th></tr>
+      </thead>
+      <tbody>
+        <tr v-for="(r, i) in ls.vocab.preview.sample" :key="i">
+          <td class="muted">{{ r.group || '未分组' }}</td>
+          <td>{{ r.term }}</td><td>{{ r.reading }}</td><td>{{ r.meaning }}</td>
+          <td>{{ r.example }}</td><td>{{ (r.tags||[]).join(' ') }}</td><td>{{ r.level }}</td>
+        </tr>
+      </tbody>
+    </table>
+    <p class="muted" v-if="ls.vocab.preview.total > ls.vocab.preview.sample.length">
+      仅显示前 {{ ls.vocab.preview.sample.length }} 条样例，导入时会写入全部 {{ ls.vocab.preview.total }} 条。
+    </p>
+    <p class="muted" v-if="(ls.vocab.preview.groups||[]).length > 1">
+      文件里认出 {{ ls.vocab.preview.groups.length }} 个分组：{{ ls.vocab.preview.groups.join(' / ') }}
+      —— 下面填一个名字可以把它们合并成一组，留空则各自保持原来的分组。
+    </p>
+    <label class="ls-field ls-field-wide">
+      <span>归到哪个分组（同名分组里的词会被覆盖更新，别的分组不受影响）</span>
+      <input class="ls-input" v-model="ls.vocab.preview.group" placeholder="留空 = 未分组">
+    </label>
+    <div class="row">
+      <label class="ls-field">
+        <span>导入方式</span>
+        <select class="ls-input" v-model="ls.vocab.mode">
+          <option value="merge">合并去重（保留库里其它条目）</option>
+          <option value="group">覆盖同名分组（只换掉这一组）</option>
+          <option value="all">清空整库后写入</option>
+        </select>
+      </label>
+    </div>
+    <p class="muted">
+      <b>merge</b>：同分组同词条的更新、其它照旧；
+      <b>group</b>：先把这个分组清干净再写（词表改版时用）；
+      <b>all</b>：连其它分组一起清掉，整个库只剩这批。
+    </p>
+    <div class="actions">
+      <button @click="lsVocabImportCancel()">取消</button>
+      <button @click="lsVocabImport()" :disabled="ls.vocab.busy">确认导入</button>
+    </div>
+  </div>
+
+  <p v-if="ls.vocab.error" class="muted" style="color:var(--err)">{{ ls.vocab.error }}</p>
+  <p v-if="ls.vocab.loading" class="muted">加载中…</p>
+
+  <table class="ls-table" v-if="ls.vocab.list.length">
+    <thead>
+      <tr>
+        <th style="width:14%">词条</th>
+        <th style="width:10%">分组</th>
+        <th style="width:11%">读音</th>
+        <th style="width:18%">释义</th>
+        <th style="width:20%">例句</th>
+        <th style="width:8%">标签</th>
+        <th style="width:5%">等级</th>
+        <th style="width:14%">操作</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr v-for="(it, i) in ls.vocab.list" :key="it.id">
+        <td>{{ it.term }}</td>
+        <td class="muted">{{ it.group || '未分组' }}</td>
+        <td>{{ it.reading }}</td>
+        <td>{{ it.meaning }}</td>
+        <td>
+          <div class="ls-cell-clip">
+            {{ it.example }}
+            <span class="muted" v-if="it.example_trans">（{{ it.example_trans }}）</span>
+          </div>
+        </td>
+        <td>{{ (it.tags||[]).join(' ') }}</td>
+        <td>{{ it.level }}</td>
+        <td>
+          <button class="ls-btn-xs" @click="lsVocabEditOpen(it)">编辑</button>
+          <button class="ls-btn-xs" @click="lsVocabDelete(it)" :class="{'ls-btn-danger': ls.vocab.confirmId===it.id}">
+            {{ ls.vocab.confirmId===it.id ? '确认删除' : '删除' }}
+          </button>
+        </td>
+      </tr>
+    </tbody>
+  </table>
+  <p v-else-if="!ls.vocab.loading" class="muted">
+    还没有单词。点上面的「新增单词」手动加，或用「导入文件 / ZIP」把现有的词表 / Anki 卡包一次性灌进来。
+  </p>
+
+  <div class="ls-pager" v-if="ls.vocab.pages > 1">
+    <button @click="lsVocabPage(-1)" :disabled="ls.vocab.page<=1">上一页</button>
+    <span class="muted">{{ ls.vocab.page }} / {{ ls.vocab.pages }}</span>
+    <button @click="lsVocabPage(1)" :disabled="ls.vocab.page>=ls.vocab.pages">下一页</button>
+  </div>
+</div>
+
+      <!-- frag/grammar.html —— 语法管理（结构与单词页一致，只是字段的语义不同：
+     term=句型标题 / reading=结构说明 / meaning=用法说明 / example=例句） -->
+<div v-show="ls.tab==='grammar'">
+  <div class="ls-toolbar">
+    <input class="ls-input ls-grow" v-model="ls.grammar.q" @keyup.enter="lsGrammarSearch()"
+           placeholder="搜句型 / 结构 / 用法 / 例句 / 标签 / 分组 …（回车或点搜索）">
+    <button @click="lsGrammarSearch()">搜索</button>
+    <select class="ls-input" v-model="ls.grammar.group" @change="lsGrammarSearch($event, 'group')">
+      <option value="">全部分组</option>
+      <option v-for="g in ls.grammar.groups" :key="g.group || '__none__'"
+              :value="g.group ? g.group : '__none__'">
+        {{ g.group || '未分组' }}（{{ g.count }}）
+      </option>
+    </select>
+    <select class="ls-input" v-model="ls.grammar.tag" @change="lsGrammarSearch($event, 'tag')">
+      <option value="">全部标签</option>
+      <option v-for="t in ls.grammar.tags" :key="t" :value="t">{{ t }}</option>
+    </select>
+    <select class="ls-input" v-model="ls.grammar.level" @change="lsGrammarSearch($event, 'level')">
+      <option value="">全部等级</option>
+      <option v-for="l in ls.grammar.levels" :key="l" :value="l">{{ l }}</option>
+    </select>
+    <select class="ls-input" v-model="ls.grammar.sort" @change="lsGrammarSearch($event, 'sort')">
+      <option value="updated">最近修改</option>
+      <option value="added">最近添加</option>
+      <option value="term">按句型</option>
+    </select>
+    <button @click="lsGrammarReset()">重置</button>
+  </div>
+
+  <div class="ls-toolbar">
+    <button @click="lsGrammarEditOpen(null)">+ 新增语法</button>
+    <button @click="lsGrammarChooseFile()">导入文件 / ZIP</button>
+    <input id="ls-grammar-file" type="file" accept=".zip,.apkg,.csv,.txt,.json" hidden
+           @change="lsGrammarPickFile($event)">
+    <button @click="lsGrammarExport('all')">导出全部（Anki 可用）</button>
+    <button @click="lsGrammarExport('query')">导出当前筛选</button>
+    <span class="muted">
+      共 {{ ls.grammar.total }} 条 · 第 {{ ls.grammar.page }}/{{ ls.grammar.pages }} 页
+    </span>
+  </div>
+
+  <!-- 分组操作：选中某个分组后才出现（导进来的整套语法点 = 一个分组） -->
+  <div class="ls-toolbar ls-groupbar" v-if="ls.grammar.group">
+    <span class="muted">已选分组：<b>{{ ls.grammar.group === '__none__' ? '未分组' : ls.grammar.group }}</b></span>
+    <input class="ls-input" v-model="ls.grammar.renameTo" placeholder="改成新的分组名"
+           @keyup.enter="lsGrammarRenameGroup()">
+    <button @click="lsGrammarRenameGroup()">重命名分组</button>
+    <button @click="lsGrammarDeleteGroup()" :class="{'ls-btn-danger': ls.grammar.delGroup}">
+      {{ ls.grammar.delGroup ? '点此确认删除整组' : '删除整组' }}
+    </button>
+  </div>
+
+  <div class="guide">
+    <p class="guide-title">语法条目怎么填</p>
+    <ul class="guide-list">
+      <li><b>句型</b>：语法点本身，如「～たことがある」「be used to doing」</li>
+      <li><b>结构</b>：接续形式 / 解释说明，对应 CSV 里的第二列</li>
+      <li><b>用法</b>：中文说明（导出到 Anki 时落在第三列 = 卡面背面）</li>
+      <li><b>标签 / 等级</b>：N5、N4、敬语、口语 …用来做推送筛选</li>
+      <li><b>分组</b>：一次导入的语法点自动归一组，名字默认取<b>文件名</b>，可在导入预览里改</li>
+    </ul>
+  </div>
+
+  <div class="local-box" v-if="ls.grammar.preview">
+    <div class="ls-preview-head">
+      <b>导入预览</b>
+      <span class="muted">{{ ls.grammar.preview.name }} · 解析出 {{ ls.grammar.preview.total }} 条</span>
+    </div>
+    <table class="ls-table">
+      <thead>
+        <tr><th>分组</th><th>句型</th><th>结构</th><th>用法</th><th>例句</th><th>标签</th><th>等级</th></tr>
+      </thead>
+      <tbody>
+        <tr v-for="(r, i) in ls.grammar.preview.sample" :key="i">
+          <td class="muted">{{ r.group || '未分组' }}</td>
+          <td>{{ r.term }}</td><td>{{ r.reading }}</td><td>{{ r.meaning }}</td>
+          <td>{{ r.example }}</td><td>{{ (r.tags||[]).join(' ') }}</td><td>{{ r.level }}</td>
+        </tr>
+      </tbody>
+    </table>
+    <p class="muted" v-if="ls.grammar.preview.total > ls.grammar.preview.sample.length">
+      仅显示前 {{ ls.grammar.preview.sample.length }} 条样例，导入时会写入全部 {{ ls.grammar.preview.total }} 条。
+    </p>
+    <p class="muted" v-if="(ls.grammar.preview.groups||[]).length > 1">
+      文件里认出 {{ ls.grammar.preview.groups.length }} 个分组：{{ ls.grammar.preview.groups.join(' / ') }}
+      —— 下面填一个名字可以把它们合并成一组，留空则各自保持原来的分组。
+    </p>
+    <label class="ls-field ls-field-wide">
+      <span>归到哪个分组（同名分组里的条目会被覆盖更新，别的分组不受影响）</span>
+      <input class="ls-input" v-model="ls.grammar.preview.group" placeholder="留空 = 未分组">
+    </label>
+    <div class="row">
+      <label class="ls-field">
+        <span>导入方式</span>
+        <select class="ls-input" v-model="ls.grammar.mode">
+          <option value="merge">合并去重（保留库里其它条目）</option>
+          <option value="group">覆盖同名分组（只换掉这一组）</option>
+          <option value="all">清空整库后写入</option>
+        </select>
+      </label>
+    </div>
+    <div class="actions">
+      <button @click="lsGrammarImportCancel()">取消</button>
+      <button @click="lsGrammarImport()" :disabled="ls.grammar.busy">确认导入</button>
+    </div>
+  </div>
+
+  <p v-if="ls.grammar.error" class="muted" style="color:var(--err)">{{ ls.grammar.error }}</p>
+  <p v-if="ls.grammar.loading" class="muted">加载中…</p>
+
+  <table class="ls-table" v-if="ls.grammar.list.length">
+    <thead>
+      <tr>
+        <th style="width:17%">句型</th>
+        <th style="width:10%">分组</th>
+        <th style="width:12%">结构</th>
+        <th style="width:20%">用法</th>
+        <th style="width:20%">例句</th>
+        <th style="width:7%">标签</th>
+        <th style="width:4%">等级</th>
+        <th style="width:10%">操作</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr v-for="(it, i) in ls.grammar.list" :key="it.id">
+        <td>{{ it.term }}</td>
+        <td class="muted">{{ it.group || '未分组' }}</td>
+        <td>{{ it.reading }}</td>
+        <td>{{ it.meaning }}</td>
+        <td>
+          <div class="ls-cell-clip">
+            {{ it.example }}
+            <span class="muted" v-if="it.example_trans">（{{ it.example_trans }}）</span>
+          </div>
+        </td>
+        <td>{{ (it.tags||[]).join(' ') }}</td>
+        <td>{{ it.level }}</td>
+        <td>
+          <button class="ls-btn-xs" @click="lsGrammarEditOpen(it)">编辑</button>
+          <button class="ls-btn-xs" @click="lsGrammarDelete(it)" :class="{'ls-btn-danger': ls.grammar.confirmId===it.id}">
+            {{ ls.grammar.confirmId===it.id ? '确认删除' : '删除' }}
+          </button>
+        </td>
+      </tr>
+    </tbody>
+  </table>
+  <p v-else-if="!ls.grammar.loading" class="muted">
+    还没有语法条目。可以手动新增，也可以把整理好的语法表（csv / zip / Anki 卡包）导进来。
+  </p>
+
+  <div class="ls-pager" v-if="ls.grammar.pages > 1">
+    <button @click="lsGrammarPage(-1)" :disabled="ls.grammar.page<=1">上一页</button>
+    <span class="muted">{{ ls.grammar.page }} / {{ ls.grammar.pages }}</span>
+    <button @click="lsGrammarPage(1)" :disabled="ls.grammar.page>=ls.grammar.pages">下一页</button>
+  </div>
+</div>
+
+      <!-- frag/bank.html —— 题库管理（二级页签「题库管理」的内容）
+
+     原先是答题页里的第三层小页签，现独立成二级页签（排在「语法管理」后面）。
+     逻辑**仍与答题推送共用一个 js**（frag/quiz.js / window.LsQuiz）：两者本来就是同一个后端
+     模块（quiz.py / quiz_routes.py），共用题型/分组/题库包这几份候选数据，拆成两个 js
+     反而要来回同步状态。原因在 quiz.html 顶部也写了一遍。
+
+     ⚠️ 浮层（题目编辑 / 导入题库包 / 批量导入）写在本文件顶层、**v-show 容器之外** ——
+     父元素 display:none 时 position:fixed 的浮层一样不出来。 -->
+<div v-show="ls.tab==='bank'">
+  <p class="muted">
+    <strong>{{ lsLangLabel() }}</strong>题库：一份题 = 一个「题库包」= 一个分组（分组名=题目来源）。
+    <span class="ls-hint">题库按语言分开存放 —— 这里只看得到当前语言的题。导入时包自带
+    <code>_meta.lang</code> 就用它写的，没写就落成当前语言。    题库内容<strong>不进 git</strong>，
+    全在你本机 <code>data/lang-learning/quiz_bank/</code> 下：备份/搬家用「导出 zip」，换机器用「导入题库包」。
+    下面的「题库包」下拉同时也是这页的筛选器 —— 选一个包就只看它的题，选「全部题库包」看全部。</span>
+  </p>
+
+  <div class="ls-toolbar">
+    <button @click="lsQuizQEditOpen(null)">+ 新增题目</button>
+    <button @click="lsQuizQImportOpen()">批量导入 JSON</button>
+    <input class="ls-input ls-grow" v-model="ls.quiz.q" placeholder="搜题目 / 选项 / 解析" @keyup.enter="lsQuizQSearch()">
+    <!-- ⚠️ 所有「v-model + @change」的 select 都必须把 $event 和字段名一起传进处理函数：
+         Vue 3 里 v-model 是 vModelSelect 指令注册的 change 监听，**比模板上的 @change 晚注册**，
+         所以 @change 先跑、此时 v-model 绑定的值还是旧的（慢一拍 / 看起来没反应）。 -->
+    <select class="ls-input" v-model="ls.quiz.qlevel" @change="lsQuizQSearch($event, 'qlevel')">
+      <option value="">全部等级</option>
+      <option v-for="l in ls.quiz.levels" :key="l" :value="l">{{ l }}</option>
+    </select>
+    <select class="ls-input" v-model="ls.quiz.qtype" @change="lsQuizQSearch($event, 'qtype')">
+      <option value="">全部题型</option>
+      <option v-for="t in ls.quiz.types" :key="t.key" :value="t.key">{{ t.label }}</option>
+    </select>
+    <select class="ls-input" v-model="ls.quiz.qgroup" @change="lsQuizQSearch($event, 'qgroup')">
+      <option value="">全部分组</option>
+      <option v-for="g in ls.quiz.groups" :key="g" :value="g">{{ g }}</option>
+    </select>
+    <button @click="lsQuizQSearch()">搜索</button>
+    <button @click="lsQuizQReset()">重置</button>
+    <span class="muted">
+      共 {{ ls.quiz.total }} 道（题库包 {{ ls.quiz.seedCount }} · 自建 {{ ls.quiz.userCount }}）
+    </span>
+  </div>
+
+  <!-- 题库包：一份题 = 一个包 = 一个分组 + 一种语言；导出/导入就是搬这个 zip -->
+  <div class="ls-toolbar">
+    <span class="muted">题库包（{{ lsLangLabel() }}）</span>
+    <!-- 这个下拉是**列表过滤器**：选了就只看这个包的题，空 = 全部包（导出/删除也用这份选择） -->
+    <select class="ls-input" v-model="ls.quiz.bankPick" @change="lsQuizBankPickChanged($event)">
+      <option value="">全部题库包（{{ ls.quiz.banks.length }} 个）</option>
+      <option v-for="b in ls.quiz.banks" :key="b.id" :value="b.id">
+        {{ b.name }}（{{ b.group }} · {{ b.count }} 道）
+      </option>
+    </select>
+    <button @click="lsQuizBankExportOne()" :disabled="ls.quiz.bankBusy">导出所选 zip</button>
+    <button @click="lsQuizBankExportAll()" :disabled="ls.quiz.bankBusy">导出本语言全部</button>
+    <button @click="lsQuizBankAskOpen()" :disabled="ls.quiz.bankBusy">导入题库包</button>
+    <button class="ls-btn-xs" :class="{'ls-btn-danger': ls.quiz.bankConfirm}"
+            @click="lsQuizBankDelete()" :disabled="ls.quiz.bankBusy">
+      {{ ls.quiz.bankConfirm ? '确认删除题库包' : '删除所选包' }}
+    </button>
+    <input type="file" id="lsQuizBankFile" accept=".zip,.json" style="display:none"
+           @change="lsQuizBankPickFile($event)">
+    <span class="muted">{{ lsQuizBankInfo() }}</span>
+  </div>
+
+  <p v-if="ls.quiz.bankLoading" class="muted">加载中…</p>
+  <p v-else-if="!ls.quiz.list.length" class="muted">没有符合条件的题目。</p>
+
+  <template v-else>
+    <table class="ls-table">
+      <thead>
+        <tr>
+          <th style="width:7%">等级</th>
+          <th style="width:9%">题型</th>
+          <th style="width:30%">题目</th>
+          <th style="width:14%">正确答案</th>
+          <th style="width:17%">分组 / 来源</th>
+          <th style="width:23%">操作</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr v-for="it in ls.quiz.list" :key="it.id">
+          <td>{{ it.level }}</td>
+          <td>
+            {{ it.type_label || it.type }}
+            <span v-if="it.audio" class="ls-hint" title="带音频">♪</span>
+          </td>
+          <td><div class="ls-cell-clip">{{ it.question }}</div></td>
+          <td><div class="ls-cell-clip">{{ it.answer }}</div></td>
+          <td>
+            <div class="ls-cell-clip">{{ it.group }}</div>
+            <span class="badge" :class="it.excluded ? 'offline' : (it.seed ? 'online' : '')">
+              {{ it.excluded ? '已排除' : (it.seed ? '题库包' : '自建') }}
+            </span>
+          </td>
+          <td>
+            <button class="ls-btn-xs" @click="lsQuizQExclude(it)">{{ it.excluded ? '恢复' : '排除' }}</button>
+            <button class="ls-btn-xs" v-if="!it.seed" @click="lsQuizQEditOpen(it)">编辑</button>
+            <button class="ls-btn-xs" v-if="!it.seed"
+                    :class="{'ls-btn-danger': ls.quiz.confirmId===it.id}"
+                    @click="lsQuizQDelete(it)">
+              {{ ls.quiz.confirmId===it.id ? '确认删除' : '删除' }}
+            </button>
+          </td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="ls-pager">
+      <button class="ls-btn-xs" :disabled="ls.quiz.page<=1" @click="lsQuizQPage(-1)">上一页</button>
+      <span class="muted">第 {{ ls.quiz.page }} / {{ ls.quiz.pages }} 页</span>
+      <button class="ls-btn-xs" :disabled="ls.quiz.page>=ls.quiz.pages" @click="lsQuizQPage(1)">下一页</button>
+    </div>
+  </template>
+
+  <p class="muted">
+    题库包里的题只能「排除」（不参与抽题，可随时恢复）、删不掉；自建的题才能编辑和删除。
+    题目带 <code>audio</code> 就是听力题：出题时会<strong>先单独发一条音频</strong>（真音频消息，群员直接就能播），
+    再发题目文字 —— OneBot 与官方机器人都一样；只有音频发不出去时才会退化成正文里给一行链接。
+  </p>
+</div>
+
+<!-- ============ 浮层：题目编辑（只改自建题） ============ -->
+<div class="modal" v-if="ls.quiz.qform" @click.self="lsQuizQCancel()">
+  <div class="modal-box">
+    <h3>{{ ls.quiz.qform.id ? '编辑题目' : '新增题目' }}</h3>
+
+    <div class="row">
+      <label class="ls-field">
+        <span>等级（可留空）</span>
+        <input class="ls-input" v-model="ls.quiz.qform.level" list="lsQuizLevels" placeholder="N5 / A1 …">
+      </label>
+      <label class="ls-field">
+        <span>题型</span>
+        <select class="ls-input" v-model="ls.quiz.qform.type">
+          <option v-for="t in ls.quiz.types" :key="t.key" :value="t.key">{{ t.label }}</option>
+        </select>
+      </label>
+      <label class="ls-field">
+        <span>难度（1~5）</span>
+        <input class="ls-input" type="number" min="1" max="5" v-model.number="ls.quiz.qform.difficulty">
+      </label>
+      <label class="ls-field">
+        <span>知识点（可选）</span>
+        <input class="ls-input" v-model="ls.quiz.qform.topic" placeholder="例：受身形">
+      </label>
+    </div>
+
+    <label class="ls-field ls-field-wide">
+      <span>题干</span>
+      <textarea class="ls-input ls-textarea" v-model="ls.quiz.qform.question" placeholder="例：「水」の読み方は？"></textarea>
+    </label>
+
+    <label class="ls-field ls-field-wide">
+      <span>听力音频 URL（可选；填了就算听力题）</span>
+      <input class="ls-input" v-model="ls.quiz.qform.audio" placeholder="https://.../audio.mp3（OneBot 群直接发语音；官方机器人只给链接）">
+    </label>
+
+    <label class="ls-field ls-field-wide">
+      <span>选项（每行一个，一般写 4 个）</span>
+      <textarea class="ls-input ls-textarea" v-model="ls.quiz.qform.optionsText" placeholder="みず&#10;すい&#10;みづ&#10;すいり"></textarea>
+    </label>
+
+    <label class="ls-field ls-field-wide">
+      <span>正确答案（从上面某一行里挑）</span>
+      <select class="ls-input" v-if="ls.quiz.qform.optionsText" v-model="ls.quiz.qform.answer">
+        <option v-for="o in lsQuizQOptions()" :key="o" :value="o">
+          {{ o }}
+        </option>
+      </select>
+      <input class="ls-input" v-else v-model="ls.quiz.qform.answer">
+      <span class="ls-hint">存的是**原文**（不是 A/B/C/D），发送时自动打乱顺序再编号。</span>
+    </label>
+
+    <label class="ls-field ls-field-wide">
+      <span>答案解析（可选）</span>
+      <textarea class="ls-input ls-textarea" v-model="ls.quiz.qform.explanation" placeholder="为什么选它、其它选项错在哪"></textarea>
+    </label>
+
+    <!-- 等级候选来自当前语言的题库（N5~N1 / A1~C2 …），也可以自己手打一个 -->
+    <datalist id="lsQuizLevels">
+      <option v-for="l in ls.quiz.levels" :key="l" :value="l"></option>
+    </datalist>
+
+    <div class="actions">
+      <button @click="lsQuizQCancel()">取消</button>
+      <button @click="lsQuizQSave()">保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ 浮层：导入题库包（先选导入方式，再弹文件框） ============ -->
+<div class="modal" v-if="ls.quiz.bankAsk" @click.self="lsQuizBankAskClose()">
+  <div class="modal-box">
+    <h3>导入题库包</h3>
+    <p class="muted">
+      支持 <code>.zip</code>（里面可以有多个 <code>.json</code> 题库包）或单个 <code>.json</code>。
+      包的 id 取自 <code>_meta.id</code>，没有就用文件名；分组取自 <code>_meta.group</code>；
+      语言取自 <code>_meta.lang</code>，<strong>没写就落成当前语言（{{ lsLangLabel() }}）</strong>。
+    </p>
+    <p class="muted">
+      <b>合并导入</b>：保留包里原有的题，按题目 id 覆盖同名题 —— 反复导同一份不会翻倍，推荐。<br>
+      <b>替换导入</b>：整个包换掉，原先那个包里的题会丢。
+    </p>
+    <div class="actions">
+      <button @click="lsQuizBankAskClose()">取消</button>
+      <button @click="lsQuizBankAskGo('merge')">合并导入</button>
+      <button @click="lsQuizBankAskGo('replace')">替换导入</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ 浮层：批量导入 ============ -->
+<div class="modal" v-if="ls.quiz.importShow" @click.self="lsQuizQImportClose()">
+  <div class="modal-box">
+    <h3>批量导入题目</h3>
+    <p class="muted">
+      贴一个 JSON 数组（或含 <code>items</code> 数组的对象），每题字段：
+      <code>level</code> <code>type</code> <code>question</code> <code>options</code>（数组）
+      <code>answer</code>（必须是某个选项原文）<code>explanation</code> <code>topic</code> <code>difficulty</code>
+      <code>group</code>（分组，留空算「自建」）<code>audio</code>（听力音频 URL，可选）。
+      这些题会落进<strong>当前语言（{{ lsLangLabel() }}）</strong>的「自建」题库包，想成包搬走就用上面的「导出 zip」。
+    </p>
+    <label class="ls-field ls-field-wide">
+      <span>JSON 内容</span>
+      <textarea class="ls-input ls-textarea" style="min-height:180px" v-model="ls.quiz.importText"
+                placeholder='[{"level":"N5","type":"詞彙","question":"...","options":["a","b","c","d"],"answer":"a"}]'></textarea>
+    </label>
+    <div class="actions">
+      <button @click="lsQuizQImportClose()">取消</button>
+      <button @click="lsQuizQImport()">导入</button>
+    </div>
+  </div>
+</div>
+
+      <!-- frag/quiz.html —— 答题推送（出题规则）
+
+     「题库」原先挂在本页的第三层小页签里，现独立成二级页签「题库管理」（见 frag/bank.html）。
+     两页**共用同一个 js**（frag/quiz.js / window.LsQuiz），因为它们是同一个后端模块
+     （quiz.py / quiz_routes.py），共用题型/分组/题库包这几份候选数据 —— 拆成两个 js 要来回同步。
+
+     注意：浮层（规则表单 / 当前题目）写在本文件里，但要放在**外层容器的 v-show 之外** ——
+     父元素 display:none 时 position:fixed 的浮层一样不出来。
+     所有函数在 module.js 里登记成 lsQuiz* 才能被模板用到。 -->
+<div v-show="ls.tab==='quiz'">
+  <p class="muted">
+    答题推送：定时抽一道<strong>{{ lsLangLabel() }}</strong>的选择题推到群里，大家作答（<code>A/B/C/D</code> 或 <code>1/2/3/4</code>；
+    <strong>QQ 官方机器人</strong>会连同四个选项一起给出 <code>A/B/C/D</code> 四个按钮，点一下即算作答），
+    到点自动公布答案、解析和名单。<span class="ls-hint">按语言区分 —— 上面的语言切到哪个，这一页就只显示哪种语言的规则；
+    题目来自「题库管理」页（同语言）。目前只有日语内置了 JLPT 题库（N5~N1），其它语言要自己去
+    题库页导入题目（导入时落成当前语言）。</span>
+  </p>
+
+  <div class="ls-toolbar">
+    <button @click="lsQuizEditOpen(null)">+ 新增出题规则</button>
+    <button @click="lsQuizLoad()">刷新</button>
+    <span class="muted">共 {{ ls.quiz.rules.length }} 条规则</span>
+  </div>
+
+  <p v-if="ls.quiz.loading" class="muted">加载中…</p>
+  <p v-else-if="!ls.quiz.rules.length" class="muted">
+    还没有出题规则。点「+ 新增出题规则」：挑实例 → 挑群 → 选等级范围和题型 →
+    定时间与答题时长，到点就会自动往群里发题。
+  </p>
+
+  <table class="ls-table" v-else>
+    <thead>
+      <tr>
+        <th style="width:8%">状态</th>
+        <th style="width:16%">抽题范围</th>
+        <th style="width:13%">实例</th>
+        <th style="width:14%">目标</th>
+        <th style="width:19%">时间</th>
+        <th style="width:10%">窗口 / 作答</th>
+        <th style="width:20%">操作</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr v-for="r in ls.quiz.rules" :key="r.id">
+        <td>
+          <span class="badge" :class="r.enabled ? 'online' : 'offline'">
+            {{ r.enabled ? '启用' : '停用' }}
+          </span>
+        </td>
+        <td>
+          {{ lsQuizLevelRange(r) }}
+          <div class="muted">{{ r.types_label }}</div>
+          <div class="muted">分组：{{ r.groups_label }}</div>
+          <div class="muted">命令：/<code>{{ r.trigger || lsQuizDefaultTrigger() }}</code></div>
+        </td>
+        <td>{{ r.instance_name || r.instance_qq }}</td>
+        <td>{{ lsQuizTargetName(r) }}</td>
+        <td>
+          <span v-if="r.mode==='daily'">
+            每天 {{ r.times.join(' / ') }} ±{{ r.jitter_minutes }}分
+          </span>
+          <span v-else>每 {{ r.interval_minutes }} 分钟 ±{{ r.jitter_minutes }}分</span>
+          <div class="muted">
+            下次：{{ lsTimeFmt(r.next_run_at) }}
+            <span v-if="r.last_run_at"> · 上次：{{ lsTimeFmt(r.last_run_at) }}</span>
+          </div>
+        </td>
+        <td>
+          {{ Math.round(r.window_seconds / 60) }} 分
+          <div class="muted">{{ r.answer_mode_label }}模式</div>
+        </td>
+        <td>
+          <button class="ls-btn-xs" @click="lsQuizRun(r)">立即出题</button>
+          <button class="ls-btn-xs" @click="lsQuizSessionOpen(r)">当前题</button>
+          <button class="ls-btn-xs" @click="lsQuizEditOpen(r)">编辑</button>
+          <button class="ls-btn-xs" @click="lsQuizToggle(r)">{{ r.enabled ? '停用' : '启用' }}</button>
+          <button class="ls-btn-xs" :class="{'ls-btn-danger': r._confirm}" @click="lsQuizDelete(r)">
+            {{ r._confirm ? '确认删除' : '删除' }}
+          </button>
+        </td>
+      </tr>
+    </tbody>
+  </table>
+
+  <p class="muted" v-if="ls.quiz.rules.length">
+    「立即出题」会真的在群里开一个答题会话（群友可以马上作答）；想看看这次抽了什么、有多少人作答，
+    用同一行的「当前题」。<span class="ls-hint">最后一次执行的结果写在 <code>last_result</code> 里，
+    常用于排查「实例没连上 / 群号映射查不到 / 范围内没题」。</span>
+  </p>
+</div>
+
+<!-- ============ 浮层：当前正在作答的题目 ============ -->
+<div class="modal" v-if="ls.quiz.sessionShow" @click.self="lsQuizSessionClose()">
+  <div class="modal-box">
+    <h3>当前题目</h3>
+    <template v-if="ls.quiz.session">
+      <div class="ls-preview-head">
+        <strong>{{ ls.quiz.session.question.level }} {{ ls.quiz.session.question.type_label || ls.quiz.session.question.type }}</strong>
+        <span class="muted">
+          开题 {{ lsTimeFmt(ls.quiz.session.started_at) }} · 剩余
+          {{ Math.max(0, ls.quiz.session.ends_at - ls.quiz.session.now) }} 秒
+        </span>
+      </div>
+      <pre class="ls-preview-text">Q： {{ ls.quiz.session.question.question }}
+<template v-for="(o,i) in ls.quiz.session.question.options" :key="i">
+{{ String.fromCharCode(65+i) }}. {{ o }}</template></pre>
+      <p class="muted">已有 {{ ls.quiz.session.answer_count }} 人作答。到点会自动公布答案、解析和名单。</p>
+    </template>
+    <p v-else class="muted">
+      这条规则当前没有进行中的答题会话 —— 可能还没到出题时间，或者窗口已经结束。
+    </p>
+    <div class="actions">
+      <button @click="lsQuizSessionClose()">关闭</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ 浮层：规则编辑 ============ -->
+<div class="modal" v-if="ls.quiz.form" @click.self="lsQuizCancel()">
+  <div class="modal-box">
+    <h3>{{ ls.quiz.form.id ? '编辑出题规则' : '新增出题规则' }}</h3>
+
+    <div class="row">
+      <label class="ls-field ls-field-wide">
+        <span>规则名（可选，方便自己认）</span>
+        <input class="ls-input" v-model="ls.quiz.form.name" placeholder="例：N3语法夜练">
+      </label>
+    </div>
+
+    <div class="row">
+      <label class="ls-field ls-field-wide">
+        <span>命令触发词（在群里发 <code>/词</code> 就立刻出一道题；留空 = 用默认）</span>
+        <input class="ls-input" maxlength="24" v-model="ls.quiz.form.trigger" :placeholder="lsQuizDefaultTrigger()">
+        <span class="ls-hint">
+          命令默认要 <strong>@ 一下机器人</strong>（前缀在「命令配置」页配，默认不加）；
+          <strong>在哪个群发命令就给哪个群出题</strong>（随发随地），要固定发到别的群去「命令配置 → 发到哪」配。
+          群里任何人都能触发。本群已经有一道题没答完时会提示、不重复开。
+        </span>
+      </label>
+    </div>
+
+    <div class="row">
+      <label class="ls-field ls-field-wide">
+        <span>用哪个实例发送</span>
+        <select class="ls-input" v-model="ls.quiz.form.instance_qq" @change="lsQuizPickInstance($event)">
+          <option value="">— 请选择 —</option>
+          <option v-for="i in ls.quiz.instances" :key="i.qq" :value="i.qq">
+            {{ i.name || i.qq }}（{{ i.protocol==='onebot' ? 'OneBot' : '官方机器人' }}）
+          </option>
+        </select>
+      </label>
+    </div>
+
+    <div class="row">
+      <label class="ls-field ls-field-wide">
+        <span>目标群</span>
+        <select class="ls-input" v-model="ls.quiz.picks.group" @change="lsQuizPickGroup($event)">
+          <option value="">— 请选择 —</option>
+          <option v-for="g in lsQuizGroups()" :key="g.id" :value="g.id">{{ g.name }}</option>
+        </select>
+      </label>
+    </div>
+
+    <div class="row">
+      <label class="ls-field">
+        <span>最低等级</span>
+        <select class="ls-input" v-model="ls.quiz.form.level_min">
+          <option value="">不限</option>
+          <option v-for="l in ls.quiz.levels" :key="l" :value="l">{{ l }}</option>
+        </select>
+      </label>
+      <label class="ls-field">
+        <span>最高等级</span>
+        <select class="ls-input" v-model="ls.quiz.form.level_max">
+          <option value="">不限</option>
+          <option v-for="l in ls.quiz.levels" :key="l" :value="l">{{ l }}</option>
+        </select>
+      </label>
+      <label class="ls-field">
+        <span>答题窗口（秒）</span>
+        <input class="ls-input" type="number" min="30" max="3600" v-model.number="ls.quiz.form.window_seconds">
+      </label>
+      <label class="ls-field">
+        <span>窗口（分钟）</span>
+        <input class="ls-input" :value="(ls.quiz.form.window_seconds/60).toFixed(1)" disabled>
+      </label>
+    </div>
+
+    <div class="row">
+      <label class="ls-field">
+        <span>作答模式</span>
+        <select class="ls-input" v-model="ls.quiz.form.answer_mode">
+          <option value="strict">严格（一人一票 · 先到先得）</option>
+          <option value="loose">宽松（可改答案 · 以最后一次为准）</option>
+        </select>
+      </label>
+      <p class="muted" style="margin:0;align-self:center">
+        严格：第一个答案就是最终答案，之后再答（哪怕答对）也不作数。<br>
+        宽松：允许改答案，出榜按最后一次算 —— 手滑打错能救回来。
+      </p>
+    </div>
+    <p class="muted" v-if="!ls.quiz.levels.length">
+      当前语言（{{ lsLangLabel() }}）还没有题库，等级只能选「不限」——
+      去「题库管理」页导入题目后这边才会有具体等级可选。
+    </p>
+
+    <div class="row">
+      <label class="ls-field ls-field-wide">
+        <span>题型（一个都不勾 = 全部）</span>
+        <div class="ls-times">
+          <label class="ls-check" v-for="t in ls.quiz.types" :key="t.key">
+            <input type="checkbox" v-model="ls.quiz.form.types" :value="t.key"> {{ t.label }}
+          </label>
+        </div>
+      </label>
+    </div>
+
+    <div class="row">
+      <label class="ls-field ls-field-wide">
+        <span>题库分组（一个都不勾 = 全部分组）</span>
+        <div class="ls-times">
+          <label class="ls-check" v-for="g in ls.quiz.groups" :key="g">
+            <input type="checkbox" v-model="ls.quiz.form.groups" :value="g"> {{ g }}
+          </label>
+          <span v-if="!ls.quiz.groups.length" class="muted">（题库里还没有分组）</span>
+        </div>
+      </label>
+    </div>
+
+    <div class="row">
+      <label class="ls-field">
+        <span>定时方式</span>
+        <select class="ls-input" v-model="ls.quiz.form.mode">
+          <option value="daily">每天固定时刻</option>
+          <option value="interval">每隔 N 分钟</option>
+        </select>
+      </label>
+      <label class="ls-field" v-if="ls.quiz.form.mode==='interval'">
+        <span>间隔（分钟，≥30）</span>
+        <input class="ls-input" type="number" min="30" max="1440" v-model.number="ls.quiz.form.interval_minutes">
+      </label>
+      <label class="ls-field">
+        <span>随机浮动（分钟）</span>
+        <input class="ls-input" type="number" min="0" max="120" v-model.number="ls.quiz.form.jitter_minutes">
+      </label>
+    </div>
+
+    <div class="row" v-if="ls.quiz.form.mode==='daily'">
+      <label class="ls-field ls-field-wide">
+        <span>出题时刻（一天可多个）</span>
+        <div class="ls-times">
+          <span class="badge" v-for="t in ls.quiz.form.times" :key="t" @click="lsQuizTimeDel(t)">
+            {{ t }} ✕
+          </span>
+          <input class="ls-input ls-time-input" v-model="ls.quiz.newTime" placeholder="20:30"
+                 @keyup.enter="lsQuizTimeAdd(ls.quiz.newTime); ls.quiz.newTime=''">
+          <button type="button" @click="lsQuizTimeAdd(ls.quiz.newTime); ls.quiz.newTime=''">添加</button>
+        </div>
+      </label>
+    </div>
+
+    <p class="muted">结束后公布：</p>
+    <label class="ls-check">
+      <input type="checkbox" v-model="ls.quiz.form.output_correct"> 答对名单（默认开）
+    </label>
+    <label class="ls-check">
+      <input type="checkbox" v-model="ls.quiz.form.output_wrong"> 答错名单
+    </label>
+    <label class="ls-check">
+      <input type="checkbox" v-model="ls.quiz.form.show_explanation"> 答案解析
+    </label>
+
+    <hr>
+
+    <label class="ls-check">
+      <input type="checkbox" v-model="ls.quiz.form.enabled"> 启用这条规则
+    </label>
+
+    <div class="actions">
+      <button @click="lsQuizCancel()">取消</button>
+      <button @click="lsQuizSave()">保存</button>
+    </div>
+  </div>
+</div>
+
+      <!-- frag/push.html —— 单词/语法推送（规则的增删改查 + 立即推送 + 内容预览）
+     注意：浮层（编辑表单 / 预览）写在本文件里，但要放在**别人 v-show 容器之外** ——
+     父元素 display:none 时 position:fixed 的浮层一样不显示。 -->
+<div v-show="ls.tab==='push'">
+  <div class="ls-toolbar">
+    <button @click="lsPushEditOpen(null)">+ 新增推送规则</button>
+    <button @click="lsPushLoad()">刷新</button>
+    <span class="muted">
+      {{ lsLangLabel() }} · 共 {{ ls.push.rules.length }} 条规则
+      （入库时才检查；选涂灰未连接的实例到点会自动跳过并记一条失败原因）
+    </span>
+  </div>
+
+  <p v-if="ls.push.loading" class="muted">加载中…</p>
+  <p v-else-if="!ls.push.rules.length" class="muted">
+    还没有推送规则。点「+ 新增推送规则」：挑实例 → 挑群/私聊 → 选内容（单词或语法）→
+    定时间与条数，到点就会自动把词推过去。
+  </p>
+
+  <table class="ls-table" v-else>
+    <thead>
+      <tr>
+        <th style="width:8%">状态</th>
+        <th style="width:12%">内容</th>
+        <th style="width:16%">实例</th>
+        <th style="width:16%">目标</th>
+        <th style="width:20%">时间</th>
+        <th style="width:8%">条数</th>
+        <th style="width:20%">操作</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr v-for="r in ls.push.rules" :key="r.id">
+        <td>
+          <span class="badge" :class="r.enabled ? 'online' : 'offline'">
+            {{ r.enabled ? '启用' : '停用' }}
+          </span>
+        </td>
+        <td>{{ lsLangLabel() }}{{ r.kind_label }}
+          <div class="muted" v-if="(r.groups||[]).length">仅 {{ r.groups.join(' / ') }}</div>
+          <div class="muted">命令：/<code>{{ r.trigger || (lsLangLabel() + r.kind_label) }}</code></div>
+        </td>
+        <td>{{ r.instance_name || r.instance_qq }}</td>
+        <td>{{ lsPushTargetName(r) }}</td>
+        <td>
+          <span v-if="r.mode==='daily'">
+            每天 {{ r.times.join(' / ') }} ±{{ r.jitter_minutes }}分
+          </span>
+          <span v-else>每 {{ r.interval_minutes }} 分钟 ±{{ r.jitter_minutes }}分</span>
+          <div class="muted">
+            下次：{{ lsTimeFmt(r.next_run_at) }}
+            <span v-if="r.last_run_at"> · 上次：{{ lsTimeFmt(r.last_run_at) }}</span>
+          </div>
+        </td>
+        <td>{{ r.count }} 条 · {{ r.order==='seq' ? '顺序' : '随机' }}</td>
+        <td>
+          <button class="ls-btn-xs" @click="lsPushPreview(r)">预览</button>
+          <button class="ls-btn-xs" @click="lsPushRun(r)">立即推送</button>
+          <button class="ls-btn-xs" @click="lsPushEditOpen(r)">编辑</button>
+          <button class="ls-btn-xs" @click="lsPushToggle(r)">{{ r.enabled ? '停用' : '启用' }}</button>
+          <button class="ls-btn-xs" :class="{'ls-btn-danger': r._confirm}" @click="lsPushDelete(r)">
+            {{ r._confirm ? '确认删除' : '删除' }}
+          </button>
+        </td>
+      </tr>
+    </tbody>
+  </table>
+
+  <p class="muted" v-if="ls.push.rules.length">
+    每条规则发送后会更新「上次」；<code>last_result</code> 里能看到最近一次是成功还是失败原因
+    （常用于「实例没连上 / 群号映射查不到」这类排查）。
+  </p>
+</div>
+
+<!-- 推送内容预览浮层（不在上面那个 v-show 容器里，否则父隐藏时它也显示不出来） -->
+<div class="modal" v-if="ls.push.previewShow" @click.self="lsPushPreviewClose()">
+  <div class="modal-box">
+    <h3>推送内容预览</h3>
+    <pre class="ls-preview-text">{{ ls.push.previewText }}</pre>
+    <div class="actions">
+      <button @click="lsPushPreviewClose()">关闭</button>
+    </div>
+  </div>
+</div>
+
+<!-- 规则编辑浮层：与上面的 v-show 容器同级 -->
+<div class="modal" v-if="ls.push.form" @click.self="lsPushCancel()">
+  <div class="modal-box">
+    <h3>{{ ls.push.form.id ? '编辑推送规则' : '新增推送规则' }}</h3>
+    <p class="muted" style="margin:4px 0 10px">
+      规则固定属于当前语言（<strong>{{ lsLangLabel() }}</strong>）—— 要推别的语言，
+      先关掉这个弹窗、在页面顶部切换语言再新建。
+    </p>
+
+    <div class="row">
+      <label class="ls-field ls-field-wide">
+        <span>命令触发词（在群里发 <code>/词</code> 就立刻推一次；留空 = 用默认）</span>
+        <input class="ls-input" maxlength="24" v-model="ls.push.form.trigger" :placeholder="lsPushDefaultTrigger()">
+        <span class="ls-hint">
+          命令默认要 <strong>@ 一下机器人</strong>（前缀可在「命令配置」页配，默认不加）；
+          <strong>在哪个群发命令就发到哪个群</strong>（随发随地），要固定发到别的群去「命令配置 → 发到哪」配。
+          群里任何人都能触发。
+          默认词随「推送内容」变（单词/语法），这里填了就以填的为准。
+        </span>
+      </label>
+    </div>
+
+    <div class="row">
+      <label class="ls-field">
+        <span>推送内容</span>
+        <select class="ls-input" v-model="ls.push.form.kind" @change="lsPushReloadGroups($event)">
+          <option value="vocab">单词</option>
+          <option value="grammar">语法</option>
+        </select>
+      </label>
+      <label class="ls-field">
+        <span>语言</span>
+        <input class="ls-input" :value="lsLangLabel()" disabled>
+      </label>
+      <label class="ls-field">
+        <span>每次条数</span>
+        <input class="ls-input" type="number" min="1" max="20" v-model.number="ls.push.form.count">
+      </label>
+      <label class="ls-field">
+        <span>取词方式</span>
+        <select class="ls-input" v-model="ls.push.form.order">
+          <option value="random">随机抽</option>
+          <option value="seq">按顺序往下（推进cursor）</option>
+        </select>
+      </label>
+    </div>
+
+    <div class="row">
+      <label class="ls-field ls-field-wide">
+        <span>用哪个实例发送</span>
+        <select class="ls-input" v-model="ls.push.form.instance_qq" @change="lsPushPickInstance($event)">
+          <option value="">— 请选择 —</option>
+          <option v-for="i in ls.push.instances" :key="i.qq" :value="i.qq">
+            {{ i.name || i.qq }}（{{ i.protocol==='onebot' ? 'OneBot' : '官方机器人' }}）
+          </option>
+        </select>
+      </label>
+    </div>
+
+    <div class="row">
+      <label class="ls-field">
+        <span>发送到</span>
+        <select class="ls-input" v-model="ls.push.form.target_type" :disabled="!lsPushAllowPrivate()">
+          <option value="group">QQ 群</option>
+          <option value="private">私聊（QQ 号）</option>
+        </select>
+      </label>
+      <label class="ls-field ls-field-wide" v-if="ls.push.form.target_type==='group'">
+        <span>目标群</span>
+        <select class="ls-input" v-model="ls.push.picks.group" @change="lsPushPickGroup($event)">
+          <option value="">— 请选择 —</option>
+          <option v-for="g in lsPushGroups()" :key="g.id" :value="g.id">{{ g.name }}</option>
+        </select>
+      </label>
+      <label class="ls-field ls-field-wide" v-else>
+        <span>接收人 QQ 号</span>
+        <input class="ls-input" v-model="ls.push.form.target_id" placeholder="只支持 OneBot 实例">
+      </label>
+    </div>
+
+    <p class="muted" v-if="ls.push.form.instance_qq && !lsPushAllowPrivate() && ls.push.form.target_type==='private'">
+      当前是 QQ 官方机器人：官方 API 拿不到用户 openid，**不支持按 QQ 号发私聊**，请改发群。
+    </p>
+
+    <div class="row">
+      <label class="ls-field">
+        <span>定时方式</span>
+        <select class="ls-input" v-model="ls.push.form.mode">
+          <option value="daily">每天固定时刻</option>
+          <option value="interval">每隔 N 分钟</option>
+        </select>
+      </label>
+      <label class="ls-field" v-if="ls.push.form.mode==='interval'">
+        <span>间隔（分钟，≥30）</span>
+        <input class="ls-input" type="number" min="30" max="1440" v-model.number="ls.push.form.interval_minutes">
+      </label>
+      <label class="ls-field">
+        <span>随机浮动（分钟）</span>
+        <input class="ls-input" type="number" min="0" max="120" v-model.number="ls.push.form.jitter_minutes">
+      </label>
+    </div>
+
+    <div class="row" v-if="ls.push.form.mode==='daily'">
+      <label class="ls-field ls-field-wide">
+        <span>推送时刻（一天可多个）</span>
+        <div class="ls-times">
+          <span class="badge" v-for="t in ls.push.form.times" :key="t" @click="lsPushTimeDel(t)">
+            {{ t }} ✕
+          </span>
+          <input class="ls-input ls-time-input" v-model="ls.push.newTime" placeholder="20:30"
+                 @keyup.enter="lsPushTimeAdd(ls.push.newTime); ls.push.newTime=''">
+          <button type="button" @click="lsPushTimeAdd(ls.push.newTime); ls.push.newTime=''">添加</button>
+        </div>
+      </label>
+    </div>
+
+    <div class="row">
+      <label class="ls-field ls-field-wide">
+        <span>标签过滤（留空不限，逗号分隔；同时命中任一标签即入选）</span>
+        <input class="ls-input" v-model="ls.push.form.tags" placeholder="例：N5,动词">
+      </label>
+      <label class="ls-field ls-field-wide">
+        <span>等级过滤（留空不限，逗号分隔）</span>
+        <input class="ls-input" v-model="ls.push.form.levels" placeholder="例：N4,N5">
+      </label>
+      <label class="ls-field ls-field-wide">
+        <span>分组过滤（留空不限，逗号分隔；只从这个词的这几个分组里抽）</span>
+        <input class="ls-input" v-model="ls.push.form.groups" list="ls-push-groups"
+               placeholder="例：xxxN1单词,N2核心">
+        <datalist id="ls-push-groups">
+          <option v-for="g in ls.push.groupOptions" :key="g" :value="g"></option>
+        </datalist>
+      </label>
+    </div>
+
+    <label class="ls-field ls-field-wide">
+      <span>自定义排版（留空用默认；占位符 {term} {reading} {meaning} {tags} {level} {group} {index}；例句不再输出）</span>
+      <span class="ls-hint">官方机器人的消息按 markdown 渲染：想让某行加粗就写 <code>**加粗**</code>；
+        分隔线（如 <code>-----</code>）必须自己单独占一行，紧贴上一行写会把那一行渲染成大标题。</span>
+      <textarea class="ls-input ls-textarea" v-model="ls.push.form.template"
+                placeholder="{index}. {term}（{reading}）{meaning}"></textarea>
+    </label>
+
+    <label class="ls-check">
+      <input type="checkbox" v-model="ls.push.form.enabled"> 启用这条规则
+    </label>
+
+    <div class="actions">
+      <button @click="lsPushCancel()">取消</button>
+      <button @click="lsPushSave()">保存</button>
+    </div>
+  </div>
+</div>
+
+      <!-- frag/news.html —— 新闻推送模块（二级页签「新闻推送」）
+     按当前语言显示来源：日语=Yahoo! ニュース（可配置关注分类 / 立即采集 / 查看新闻）；
+     其它语言=占位「暂无来源」。推送规则区把采集到的新闻推到 QQ 群。 -->
+<div v-show="ls.tab==='news'">
+  <p class="muted">
+    <strong>{{ lsLangLabel() }}</strong>的新闻来源。日语当前接入 <strong>Yahoo! ニュース</strong>，
+    每个分类一个 RSS；你可以只勾选<strong>想关注的分类</strong>，后端只采集这些（不关注的类别根本不下载）。
+    「推送规则」把采集到的新闻按实例 / 群 / 时刻发到 QQ。<span class="ls-hint">后续要加别的媒体，
+    只要在后端 <code>news.SOURCES</code> 里加一项即可，这里会自动多出对应来源。</span>
+  </p>
+
+  <!-- 当前语言没有来源 → 占位 -->
+  <p v-if="!ls.news.sources.length" class="warn">
+    当前语言（{{ lsLangLabel() }}）<strong>暂无已接入的新闻来源</strong>。后续扩展（非 Yahoo、或其它语言源）会在这里出现。
+  </p>
+
+  <!-- 来源卡片 -->
+  <div v-for="src in ls.news.sources" :key="src.id" class="ls-card">
+    <div class="ls-card-head">
+      <strong>{{ src.name }}</strong>
+      <label class="ls-switch">
+        <input type="checkbox" v-model="src.cfg.enabled">
+        <span>{{ src.cfg.enabled ? '已启用' : '已停用' }}</span>
+      </label>
+    </div>
+
+    <div class="ls-toolbar">
+      <label class="ls-field ls-field-sm">
+        <span>采集间隔(分)</span>
+        <input class="ls-input" type="number" min="30" max="1440" v-model.number="src.cfg.interval_minutes">
+      </label>
+      <label class="ls-switch">
+        <input type="checkbox" v-model="src.cfg.auto_collect">
+        <span>后台自动采集</span>
+      </label>
+      <button class="ls-btn-xs ls-btn-primary" @click="lsNewsCollect(src)" :disabled="ls.news.pushBusy">立即采集</button>
+      <button class="ls-btn-xs" @click="lsNewsSourceCfgSave(src)">保存采集设置</button>
+      <button class="ls-btn-xs" @click="lsNewsItems(src)">查看最近新闻</button>
+    </div>
+
+    <p class="muted">
+      上次采集：{{ lsNewsFmt(src.last_collect) }} · 缓存 {{ src.cache_count }} 条
+      <span v-if="src.last_error" style="color:var(--err)">· 错误：{{ src.last_error }}</span>
+    </p>
+
+    <!-- 关注分类多选 -->
+    <div class="ls-cat-grid">
+      <label v-for="c in src.categories" :key="c.id" class="ls-check">
+        <input type="checkbox" :checked="src.cfg.categories.includes(c.id)"
+               @change="lsNewsCatToggle(src, c.id)">
+        <span>{{ c.label }}</span>
+      </label>
+    </div>
+
+    <!-- 该源最近新闻 -->
+    <div v-if="ls.news.sourcePick === src.id && ls.news.items.length" class="ls-news-list">
+      <p class="muted" v-if="ls.news.itemsLoading">加载中…</p>
+      <div v-for="it in ls.news.items" :key="it.id" class="ls-news-item">
+        <div class="ls-news-title">[{{ it.category_label }}] {{ it.title }}</div>
+        <div class="ls-news-sum" v-if="it.summary">{{ it.summary }}</div>
+        <div class="ls-news-meta">
+          {{ lsNewsFmt(it.published) }}
+          <a :href="it.link" target="_blank" rel="noopener">原文 ↗</a>
+          <button class="ls-btn-xs" @click="lsNewsItemBody(src.id, it)">预览正文</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 推送规则区（有来源才显示） -->
+  <div v-if="ls.news.sources.length" class="ls-card">
+    <div class="ls-card-head">
+      <strong>新闻推送规则</strong>
+      <button class="ls-btn-xs ls-btn-primary" @click="lsNewsPushEditOpen(null)">+ 新建规则</button>
+    </div>
+    <p v-if="!ls.news.pushRules.length" class="muted">还没有推送规则。新建一条：选实例 / 群 / 时刻，机器人就会按时把新闻发到群里。</p>
+    <table v-else class="ls-table">
+      <thead>
+        <tr>
+          <th style="width:18%">来源</th>
+          <th style="width:22%">发送目标</th>
+          <th style="width:22%">排期</th>
+          <th style="width:8%">条数</th>
+          <th style="width:30%">操作</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr v-for="r in ls.news.pushRules" :key="r.id">
+          <td>{{ r.source_name }}</td>
+          <td>{{ r.instance_name || r.instance_qq }} → {{ r.target_name || r.target_id }}</td>
+          <td>
+            <span v-if="r.mode==='interval'">每 {{ r.interval_minutes }} 分</span>
+            <span v-else>{{ (r.times||[]).join(' / ') }}</span>
+            <span v-if="r.last_result" class="ls-hint">· {{ r.last_result }}</span>
+          </td>
+          <td>{{ r.count }}</td>
+          <td>
+            <button class="ls-btn-xs" :class="{'ls-btn-danger': ls.news.pushConfirm===r.id}"
+                    @click="lsNewsPushDelete(r)">{{ ls.news.pushConfirm===r.id ? '确认删除' : '删除' }}</button>
+            <button class="ls-btn-xs" @click="lsNewsPushToggle(r)">{{ r.enabled ? '停用' : '启用' }}</button>
+            <button class="ls-btn-xs" @click="lsNewsPushRun(r)">立即推送</button>
+            <button class="ls-btn-xs" @click="lsNewsPushEditOpen(r)">编辑</button>
+          </td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- ============ 浮层：新闻推送规则编辑 ============ -->
+<div class="modal" v-if="ls.news.pushForm" @click.self="lsNewsPushCancel()">
+  <div class="modal-box">
+    <h3>{{ ls.news.pushForm.id ? '编辑新闻推送规则' : '新建新闻推送规则' }}</h3>
+
+    <div class="row">
+      <label class="ls-field">
+        <span>新闻来源</span>
+        <select class="ls-input" v-model="ls.news.pushForm.source">
+          <option v-for="src in ls.news.sources" :key="src.id" :value="src.id">{{ src.name }}</option>
+        </select>
+      </label>
+    </div>
+
+    <div class="row">
+      <label class="ls-field">
+        <span>发送实例</span>
+        <select class="ls-input" v-model="ls.news.pushForm.instance_qq" @change="lsNewsPushPickInstance($event)">
+          <option value="">— 请选择 —</option>
+          <option v-for="i in ls.news.instances" :key="i.qq" :value="i.qq">
+            {{ i.name || i.qq }}（{{ i.protocol==='onebot' ? 'OneBot' : '官方机器人' }}）
+          </option>
+        </select>
+      </label>
+      <label class="ls-field">
+        <span>目标</span>
+        <select class="ls-input" v-model="ls.news.pushForm.target_id" @change="lsNewsPushPickGroup($event)">
+          <option value="">— 请选择 —</option>
+          <option v-for="g in lsNewsGroups()" :key="g.id" :value="g.id">{{ g.name }}</option>
+        </select>
+      </label>
+    </div>
+
+    <div class="row">
+      <label class="ls-switch">
+        <input type="radio" value="group" v-model="ls.news.pushForm.target_type"> 群
+      </label>
+      <label class="ls-switch" :class="{'ls-disabled': !lsNewsAllowPrivate()}">
+        <input type="radio" value="private" v-model="ls.news.pushForm.target_type"
+               :disabled="!lsNewsAllowPrivate()"> 私聊
+      </label>
+      <span v-if="!lsNewsAllowPrivate()" class="ls-hint">官方机器人拿不到用户 openid，私聊不可用</span>
+    </div>
+
+    <div class="row">
+      <label class="ls-field">
+        <span>发送模式</span>
+        <select class="ls-input" v-model="ls.news.pushForm.mode">
+          <option value="daily">每天固定时刻</option>
+          <option value="interval">每隔 N 分钟</option>
+        </select>
+      </label>
+      <label class="ls-field ls-field-sm" v-if="ls.news.pushForm.mode==='daily'">
+        <span>时刻(逗号分隔)</span>
+        <input class="ls-input" v-model="ls.news.pushForm.timesText" placeholder="08:00,20:00">
+      </label>
+      <label class="ls-field ls-field-sm" v-else>
+        <span>间隔(分)</span>
+        <input class="ls-input" type="number" min="30" max="1440" v-model.number="ls.news.pushForm.interval_minutes">
+      </label>
+      <label class="ls-field ls-field-sm">
+        <span>每次条数</span>
+        <input class="ls-input" type="number" min="1" max="20" v-model.number="ls.news.pushForm.count">
+      </label>
+      <label class="ls-switch">
+        <input type="checkbox" v-model="ls.news.pushForm.with_body">
+        <span>推送带正文（关则只发标题+链接）</span>
+      </label>
+    </div>
+
+    <div class="row">
+      <span class="ls-field-label">关注分类（不勾=该来源全部）：</span>
+      <div class="ls-cat-grid">
+        <label v-for="c in lsNewsPushCats()" :key="c.id" class="ls-check">
+          <input type="checkbox" :checked="ls.news.pushForm.categories.includes(c.id)"
+                 @change="lsNewsPushCatToggle(c.id)">
+          <span>{{ c.label }}</span>
+        </label>
+      </div>
+    </div>
+
+    <div class="actions">
+      <button @click="lsNewsPushCancel()">取消</button>
+      <button class="ls-btn-primary" @click="lsNewsPushSave()">保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ 浮层：新闻正文预览 ============ -->
+<div class="modal" v-if="ls.news.preview && ls.news.preview.open" @click.self="lsNewsItemBodyClose()">
+  <div class="modal-box">
+    <h3>{{ ls.news.preview.title }}</h3>
+    <p class="muted">
+      <a :href="ls.news.preview.link" target="_blank" rel="noopener">原文 ↗</a>
+      <span v-if="ls.news.preview.loading">· 正在抓取正文…</span>
+      <span v-else-if="ls.news.preview.err" style="color:var(--err)">· {{ ls.news.preview.err }}</span>
+      <span v-else-if="!ls.news.preview.body">· 该条为视频新闻或无文字正文</span>
+    </p>
+    <div class="ls-news-body" v-if="ls.news.preview.body && !ls.news.preview.loading">
+      {{ ls.news.preview.body }}
+    </div>
+    <div class="actions">
+      <button @click="lsNewsItemBodyClose()">关闭</button>
+    </div>
+  </div>
+</div>
+
+      <!-- frag/commands.html —— 命令配置（当前语言的「全部命令」聚合成一张表，触发词就地改）
+     一份逻辑见 frag/commands.js（window.LsCommands）。
+     命令词分散在三处（推送规则 / 答题规则 / 语言级菜单配置），这一页把它们列到一起，
+     改完点保存 → 写回原处（后端 commands_routes.py）。
+     顶部还有一组**全局**的「命令格式」：前缀（默认空 = 不加） + 要不要 @机器人（默认要），
+     与当前语言无关，存 commands.json 的顶层键（`_prefix` / `_need_at`）。 -->
+<div v-show="ls.tab==='commands'">
+  <!-- 命令格式（全局，与语言无关）：前缀 + 要不要 @。默认「不加前缀 + 要 @」 -->
+  <div class="ls-cmd-format">
+    <label class="ls-field">
+      <span>命令前缀</span>
+      <input class="ls-input" maxlength="4" v-model="ls.cmd.form.prefix"
+             placeholder="（留空 = 不加前缀）">
+    </label>
+    <label class="ls-check">
+      <input type="checkbox" v-model="ls.cmd.form.need_at"> 需要 @ 机器人
+    </label>
+    <button class="ls-btn-xs" @click="lsCmdSaveFormat()">保存格式</button>
+    <span class="muted">当前发法：<code>{{ lsCmdSample() }}</code></span>
+  </div>
+
+  <p class="muted" style="margin:0 0 10px">
+    命令<strong>只在群里生效</strong>。这张表<strong>固定四行</strong>（菜单 / 单词 / 语法 / 答题，
+    任何语言都一样）—— 本语言还没建规则的行也在，触发词照样能先填（等规则建出来自动接上，
+    那时「发到哪」才能配）。
+    「触发词」列<strong>留空 = 用默认词</strong>（灰字就是当前默认），改完点那一行的「保存」
+    （只改命令词，不影响定时排期）。
+    「发到哪」是<strong>命令触发</strong>的投递目标：<strong>一条记录 = 一台机器人 + 它发到哪</strong>
+    （可加多条）。<strong>一条都不加 = 随发随地</strong>（收到命令的那台 + 发命令的那个群）；
+    只想换台机器人发 → 加一行选「任何群可用」
+    （与「定时推送发到哪」是两条线，后者见灰字）。
+    <strong>触发成功不会回执</strong> —— 内容直接发到群里；
+    只有失败（例：本群还有一道题没结束）才会回一句。
+  </p>
+
+  <!-- 答题命令的参数（2026-10-07 加）。只对「答题」这一行有效，写错的参数会当场报错、不静默忽略 -->
+  <p class="muted" style="margin:0 0 10px">
+    <strong>「答题」可以在命令后面带参数</strong>，临时改这一次的出题范围（不动规则本身），
+    以日语为例：<code>日语答题 level=1 type=语法 mode=宽松 window=3m</code>
+    —— <code>level</code> 等级（<code>1</code>=N1，可写 <code>1-3</code> 范围）；
+    <code>type</code> 题型（语法 / 听力 / 词汇 / 汉字 / 读解，多个用逗号）；
+    <code>mode</code> <strong>严谨</strong>（默认，抽不到就说没有）/ <strong>宽松</strong>（抽不到就逐级放宽到能出题）；
+    <code>window</code> 答题窗口（<code>3m</code> / <code>180</code>，裸数字按秒）。
+    参数都能省，键名也认中文（等级 / 题型 / 模式 / 时间）。
+  </p>
+
+  <div class="warn" v-if="ls.cmd.collisions.length">
+    这些词被多条命令共用：<strong>{{ ls.cmd.collisions.join('、') }}</strong>
+    —— 发一次它们会一起触发，建议换成不同的词。
+  </div>
+
+  <div class="ls-toolbar">
+    <span class="muted ls-grow">
+      固定四条命令：菜单 / 单词 / 语法 / 答题（任何语言都一样）
+    </span>
+    <button class="ls-btn-xs" @click="lsCmdLoad()">刷新</button>
+  </div>
+
+  <p class="muted" v-if="ls.cmd.loading">加载中…</p>
+
+  <table class="ls-table" v-else>
+    <thead>
+      <tr>
+        <th style="width:10%">类型</th>
+        <th style="width:22%">命令</th>
+        <th style="width:26%">触发词</th>
+        <th style="width:22%">发到哪</th>
+        <th style="width:20%">操作</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr v-for="it in ls.cmd.items" :key="it.slot">
+        <td>
+          <span class="badge online">{{ lsCmdKindLabel(it.kind) }}</span>
+          <div class="muted" v-if="!it.enabled">已停用</div>
+        </td>
+        <td>{{ it.label }}
+          <div class="muted">{{ it.desc }}</div>
+        </td>
+        <td>
+          <div class="ls-cmd-trigger">
+            <code v-if="ls.cmd.form.prefix">{{ ls.cmd.form.prefix }}</code>
+            <input class="ls-input" maxlength="24" v-model="it.trigger" :placeholder="it.default">
+          </div>
+          <div class="muted">{{ it.custom ? '已自定义 · 清空并保存可恢复默认' : '默认：' + it.default }}</div>
+        </td>
+        <td>
+          <span class="muted" v-if="!it.has_rule">（本语言还没建规则）</span>
+          <template v-else>
+            <span>{{ it.target_text }}</span>
+            <div v-if="it.kind!=='menu'">
+              <button class="ls-btn-xs" @click="lsCmdTargetsOpen(it)">配置</button>
+            </div>
+          </template>
+        </td>
+        <td>
+          <button class="ls-btn-xs" @click="lsCmdSave(it)">保存</button>
+        </td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<!-- 命令投递目标浮层（与上面的 v-show 容器同级，父隐藏时它才显示得出来）
+     每条记录 = 一台机器人 + 它发到哪（scope 三选一）；select 的 change 走 lsCmdTargetRowPick
+     而不是 v-model，是为了「换机器人时顺手清空已勾的群」这件事有个确定的执行顺序。 -->
+<div class="modal" v-if="ls.cmd.targets.item" @click.self="lsCmdTargetsClose()">
+  <div class="modal-box">
+    <h3>「{{ ls.cmd.targets.item.effective || ls.cmd.targets.item.label }}」发到哪</h3>
+    <p class="muted" style="margin:4px 0 10px">
+      一条记录 = 一台机器人 + 它发到哪（可加多条）：
+      <strong>任何群可用</strong> = 这台照常发到<strong>发命令的那个群</strong>
+      （只想换台机器人发就用它）；
+      <strong>选中的群可用</strong> = 这台<strong>总是</strong>发到下面勾的那些群
+      （跟命令在哪个群发无关；官方机器人的群就是它「群号映射」里的群）；
+      <strong>全部禁用</strong> = 这台不参与。<br>
+      <strong>一条都不加 = 随发随地</strong>：收到命令的那台 + 发命令的那个群。
+      这里只管「发命令」；<strong>定时推送</strong>仍发到
+      <code>{{ ls.cmd.targets.item.target_name }}</code>。
+    </p>
+
+    <div class="ls-cmd-trow" v-for="(row, i) in ls.cmd.targets.rows" :key="i">
+      <div class="ls-cmd-trow-head">
+        <span class="ls-cmd-trow-no">机器人{{ i + 1 }}</span>
+        <select class="ls-input" :value="row.qq"
+                @change="lsCmdTargetRowPick(row, $event.target.value)">
+          <option value="">（选一台机器人）</option>
+          <option v-for="x in lsCmdTargetRowOptions(row)" :key="x.qq" :value="String(x.qq)">
+            {{ lsCmdTargetRowLabel(x) }}
+          </option>
+        </select>
+        <button class="ls-btn-xs" @click="lsCmdTargetRemoveRow(i)">删除</button>
+      </div>
+      <div class="ls-cmd-trow-scope">
+        <label class="ls-check"><input type="radio" value="any" v-model="row.scope"> 任何群可用</label>
+        <label class="ls-check"><input type="radio" value="none" v-model="row.scope"> 全部禁用</label>
+        <label class="ls-check"><input type="radio" value="some" v-model="row.scope"> 选中的群可用</label>
+      </div>
+      <div class="ls-cmd-trow-groups" v-if="row.scope === 'some'">
+        <label class="ls-check" v-for="g in lsCmdTargetRowGroups(row)" :key="g.id">
+          <input type="checkbox" :value="String(g.id)" v-model="row.groupPicks">
+          {{ g.name || g.id }}
+        </label>
+        <p class="muted" v-if="!lsCmdTargetRowGroups(row).length">（这台机器人没有可选的群）</p>
+      </div>
+    </div>
+
+    <p class="muted" v-if="!ls.cmd.targets.rows.length" style="margin:8px 0">
+      （现在一条都没加 = 随发随地 —— 收到命令的那台机器人，发到发命令的那个群）
+    </p>
+
+    <div class="ls-toolbar" style="margin-top:8px">
+      <button class="ls-btn-xs" @click="lsCmdTargetAddRow()">+ 添加机器人</button>
+      <button class="ls-btn-xs" @click="lsCmdTargetsRefresh()">刷新机器人列表</button>
+      <span class="muted ls-grow" style="font-size:12px">
+        可选机器人 {{ ls.cmd.targets.bots.length }} 台（含官方机器人；
+        映射里有但此刻没连上的会标「未连接」）—— 每次打开本窗口都会自动重拉一次
+      </span>
+    </div>
+
+    <div class="actions">
+      <button @click="lsCmdTargetsClose()">取消</button>
+      <button @click="lsCmdTargetsSave()">保存</button>
+    </div>
+  </div>
+</div>
+
+      <!-- frag/editor.html —— 单词 / 语法的编辑浮层（为 partial.html 直接引用，不在任何
+     子页的 v-show 容器里，否则父元素 display:none 时 position:fixed 的浮层也看不见） -->
+<div class="modal" v-if="ls.editor.show" @click.self="lsEditorClose()">
+  <div class="modal-box">
+    <h3>{{ ls.editor.item.id ? '编辑' : '新增' }}{{ ls.editor.kind==='vocab' ? '单词' : '语法' }}</h3>
+
+    <label class="ls-field ls-field-wide">
+      <span>{{ ls.editor.kind==='vocab' ? '词条' : '句型' }}</span>
+      <input class="ls-input" v-model="ls.editor.item.term" placeholder="必填">
+    </label>
+
+    <div class="row">
+      <label class="ls-field">
+        <span>{{ ls.editor.kind==='vocab' ? '读音 / 假名 / 音标' : '结构 / 接续' }}</span>
+        <input class="ls-input" v-model="ls.editor.item.reading">
+      </label>
+      <label class="ls-field">
+        <span>等级</span>
+        <input class="ls-input" v-model="ls.editor.item.level" placeholder="N5 / N4 / TOPIK1 …">
+      </label>
+    </div>
+
+    <label class="ls-field ls-field-wide">
+      <span>{{ ls.editor.kind==='vocab' ? '释义（中文）' : '用法说明' }}</span>
+      <input class="ls-input" v-model="ls.editor.item.meaning">
+    </label>
+
+    <label class="ls-field ls-field-wide">
+      <span>例句</span>
+      <input class="ls-input" v-model="ls.editor.item.example">
+    </label>
+
+    <label class="ls-field ls-field-wide">
+      <span>例句翻译</span>
+      <input class="ls-input" v-model="ls.editor.item.example_trans">
+    </label>
+
+    <div class="row">
+      <label class="ls-field ls-field-wide">
+        <span>分组（留空 = 未分组；导入的文件默认按文件名分组）</span>
+        <input class="ls-input" v-model="ls.editor.item.group" list="ls-editor-groups"
+               placeholder="例：xxxN1单词">
+        <datalist id="ls-editor-groups">
+          <option v-for="g in lsEditorGroups()" :key="g" :value="g"></option>
+        </datalist>
+      </label>
+    </div>
+
+    <div class="row">
+      <label class="ls-field ls-field-wide">
+        <span>标签（逗号分隔，可用于推送过滤）</span>
+        <input class="ls-input" v-model="ls.editor.item.tags" placeholder="N5,动词,日常">
+      </label>
+    </div>
+
+    <label class="ls-field ls-field-wide">
+      <span>备注</span>
+      <textarea class="ls-input ls-textarea" v-model="ls.editor.item.note"></textarea>
+    </label>
+
+    <div class="actions">
+      <button @click="lsEditorClose()">取消</button>
+      <button @click="lsEditorSave()">保存</button>
+    </div>
+  </div>
+</div>
+
+    </div>
+    <div class="toast" :class="toast.kind" v-show="toast.show">{{ toast.text }}</div>
+
+    </div>
+    <script src="/api/plugin/page/bridge-sdk.js"></script>
+    <script src="./lib/vue.global.js"></script>
+    <script src="./js/app.js"></script>
+    <script src="./js/frag/items-core.js"></script>
+    <script src="./js/frag/vocab.js"></script>
+    <script src="./js/frag/grammar.js"></script>
+    <script src="./js/frag/editor.js"></script>
+    <script src="./js/frag/push.js"></script>
+    <script src="./js/frag/quiz.js"></script>
+    <script src="./js/frag/news.js"></script>
+    <script src="./js/frag/commands.js"></script>
+    <script src="./js/module.js"></script>
+</body>
+</html>

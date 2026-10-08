@@ -1,0 +1,7 @@
+{
+  "enabled": {
+    "description": "模块总开关（关掉后不再响应群里的命令，后台推送循环也一并停）",
+    "type": "bool",
+    "default": true
+  }
+}

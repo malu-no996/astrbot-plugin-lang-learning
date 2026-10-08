@@ -1,0 +1,12 @@
+# Python
+__pycache__/
+*.py[cod]
+
+# ---- 运行数据（整目录不进仓库 / 不进更新压缩包）----
+# AstrBot 更新插件时会把压缩包里出现的每个目录先 rmtree 再整体覆盖，
+# 所以运行数据一律放 AstrBot 的插件数据区（StarTools.get_data_dir），
+# 仓库里不出现 data/ 目录 —— 这里列出只是万一有人在本地跑离线脚本留下的。
+data/
+
+# 日志/临时
+*.log

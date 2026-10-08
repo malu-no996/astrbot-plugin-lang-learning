@@ -1,0 +1,82 @@
+/* frag/news.css —— 新闻推送模块样式（新增类，通用类沿用 style.css） */
+
+.ls-card {
+  border: 1px solid var(--line, #e3e3e8);
+  border-radius: 10px;
+  padding: 14px 16px;
+  margin: 14px 0;
+  background: var(--card-bg, #fff);
+}
+.ls-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+.ls-cat-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  margin: 8px 0;
+}
+.ls-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.ls-news-list {
+  margin-top: 10px;
+  border-top: 1px dashed var(--line, #e3e3e8);
+  padding-top: 8px;
+}
+.ls-news-item {
+  padding: 8px 0;
+  border-bottom: 1px solid var(--line, #eee);
+}
+.ls-news-title {
+  font-weight: 600;
+  font-size: 14px;
+}
+.ls-news-sum {
+  color: var(--muted, #666);
+  font-size: 13px;
+  margin: 2px 0;
+}
+.ls-news-meta {
+  color: var(--muted, #888);
+  font-size: 12px;
+}
+.ls-news-meta a {
+  margin-left: 8px;
+}
+.ls-field-label {
+  font-size: 13px;
+  color: var(--muted, #666);
+}
+.ls-field-sm {
+  max-width: 160px;
+}
+.ls-disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.ls-btn-primary {
+  background: var(--primary, #2b7de9);
+  color: #fff;
+  border-color: transparent;
+}
+.ls-news-body {
+  max-height: 60vh;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.7;
+  font-size: 14px;
+  background: var(--code-bg, #f6f7f9);
+  border: 1px solid var(--line, #e3e3e8);
+  border-radius: 8px;
+  padding: 12px 14px;
+  margin: 8px 0;
+}

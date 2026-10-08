@@ -1,0 +1,137 @@
+/* 外语学习模块 · 公共样式（plugins/_vendor/langstudy/web/style.css）
+ * 只放**跨 frag 共用**的东西：工具栏、表格、字段行、分页、导入预览块。
+ * 各页面特有的类写在自己的 frag/*.css 里并加前缀，避免与其它模块撞名字。 */
+
+.ls-mod-switch { margin-left: auto; font-size: 13px; font-weight: normal; }
+.ls-switch { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+
+/* 语言一排：与二级页签拉开距离，别让人误以为是同一层 */
+.ls-langs { margin-bottom: 10px; }
+.ls-status { margin: 0 0 14px; }
+.ls-subs { border-bottom: none; padding-bottom: 0; margin-bottom: 14px; }
+/* 只给「未选中」的页签压灰底。
+ * ⚠️ 不能写成 .ls-subs .tab（命中所有页签）：它与 base.css 的 .tab.active 同特异性(0,2,0)、
+ * 且本文件后加载 → 会把选中态的 accent 底色也盖掉，而 .tab.active 的白字还在，
+ * 结果就是白字配近白底、完全看不清。 */
+.ls-subs .tab:not(.active) { background: #f6f7f9; }
+
+/* 工具栏：一行塞「输入框 + 下拉 + 按钮」，靠 flex-wrap 自适应 */
+.ls-toolbar { display: flex; flex-wrap: wrap; gap: 8px 10px; align-items: center; margin-bottom: 10px; }
+.ls-grow { flex: 1 1 240px; min-width: 0; }
+
+/* 分组操作条：选中分组后才出现，给它一点底色区分「这是对整组动手」 */
+.ls-groupbar {
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--brand, #4a7cf7);
+  border-radius: 6px;
+  background: #f7f9ff;
+}
+.ls-groupbar .ls-input { flex: 0 1 200px; }
+
+.ls-input {
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fff;
+  font-size: 13px;
+  color: var(--fg, #24292f);
+  box-sizing: border-box;
+  min-width: 0;
+}
+.ls-textarea { width: 100%; min-height: 68px; resize: vertical; font-family: inherit; }
+
+/* 表单字段：标签在上、控件在下，两列时各占一半宽度 */
+.ls-field { display: flex; flex-direction: column; gap: 4px; flex: 1 1 200px; min-width: 0; }
+.ls-field > span { font-size: 12px; color: var(--muted); }
+/* 字段里的补充说明（第二行提示）：比字段名再弱一点，代码片段给个浅底 */
+.ls-hint { display: block; font-size: 12px; line-height: 1.55; color: var(--muted); opacity: .85; }
+.ls-hint code {
+  font-family: ui-monospace, Consolas, Menlo, monospace; font-size: 11px;
+  padding: 0 3px; border-radius: 3px; white-space: nowrap;
+  background: rgba(127, 127, 127, .16); color: inherit;
+}
+.ls-field-wide { flex: 1 1 100%; }
+.ls-check { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; margin: 6px 0; }
+
+/* 表格：长文本列只占一行，超了省略（完整内容在编辑浮层里看） */
+.ls-table { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 8px; }
+.ls-table th, .ls-table td {
+  border-bottom: 1px solid var(--line);
+  padding: 7px 8px;
+  text-align: left;
+  vertical-align: top;
+  word-break: break-word;
+}
+.ls-table th { color: var(--muted); font-weight: normal; }
+.ls-table tbody tr:hover { background: #fafbfc; }
+/* 长文本两行截断。⚠️ 只能套在 td **里面**的 div 上，不能直接放 td：
+ * td 被改成 -webkit-box 后不再是 table-cell，高度只按截断后的内容算、撑不起整行，
+ * 它的 border-bottom 就画在半截位置 → 整张表的行线按列错位。 */
+.ls-cell-clip {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.ls-btn-xs { padding: 3px 9px; font-size: 12px; margin-right: 6px; }
+.ls-btn-danger { border-color: var(--err); color: var(--err); }
+
+.ls-pager { display: flex; align-items: center; gap: 10px; margin-top: 12px; }
+.ls-preview-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 8px; }
+.ls-preview-text {
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: #f6f7f9;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px 14px;
+  font-size: 13px;
+  line-height: 1.6;
+  margin: 0;
+}
+
+/* 时刻 chips：点一下即删（再配一个输入框添加） */
+.ls-times { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.ls-times .badge { cursor: pointer; user-select: none; }
+.ls-time-input { width: 92px; }
+
+/* 命令配置页：触发词输入框前面固定露出命令前缀。
+ * 前缀**不入库**（存在规则里的词永远不带前缀，读配置现拼），所以输入框里只填词本身，
+ * 前缀只做展示 —— 改了前缀也不用逐条改规则。
+ * ⚠️ 前缀默认**空**（不加前缀）时 `v-if` 把那颗 code 整个去掉，不显示空框。 */
+.ls-cmd-trigger { display: flex; align-items: center; gap: 4px; }
+.ls-cmd-trigger > code { color: var(--muted); font-size: 13px; }
+.ls-cmd-trigger .ls-input { width: 132px; }
+
+/* 命令格式条（全局：前缀 + 要不要 @）：一行的「字段 + 勾选 + 按钮 + 当前发法示例」。
+ * 示例那截用 margin-left:auto 推到最右 —— 它是**说明**，不该和可编辑控件挤在一起。 */
+.ls-cmd-format {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px;
+  padding: 10px 12px; margin-bottom: 12px;
+  border: 1px solid var(--line); border-radius: 6px; background: #f9fafc;
+}
+.ls-cmd-format .ls-field { flex: 0 0 150px; }
+.ls-cmd-format .ls-check { margin: 0; white-space: nowrap; }
+.ls-cmd-format > .muted { margin-left: auto; font-size: 12px; }
+.ls-cmd-format > .muted code { color: inherit; }
+
+/* 「发到哪」浮层：每条记录 = 一行「机器人1 > [三选一 scope] [群多选]」。
+ * 群多选给最大高度 + 滚动 —— 群可能几十个（OneBot 现拉群列表），别把弹层撑到屏幕外。 */
+.ls-cmd-trow {
+  border: 1px solid var(--line); border-radius: 6px;
+  padding: 8px 10px; margin-top: 8px;
+}
+.ls-cmd-trow-head { display: flex; align-items: center; gap: 8px; }
+.ls-cmd-trow-no { font-size: 13px; font-weight: 600; white-space: nowrap; }
+.ls-cmd-trow-head .ls-input { flex: 1 1 auto; min-width: 0; }
+.ls-cmd-trow-scope { margin-top: 4px; }
+.ls-cmd-trow-scope .ls-check { margin: 2px 12px 2px 0; }
+.ls-cmd-trow-groups {
+  margin-top: 4px; padding: 6px 8px;
+  border-radius: 6px; background: rgba(127, 127, 127, .08);
+  max-height: 200px; overflow: auto;
+}
+.ls-cmd-trow-groups .ls-check { display: flex; margin: 4px 0; }
+
