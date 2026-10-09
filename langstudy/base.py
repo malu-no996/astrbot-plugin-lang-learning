@@ -42,6 +42,7 @@ CMD_PREFIX_KEY = "_prefix"      # 命令前缀
 CMD_NEED_AT_KEY = "_need_at"    # 要不要 @ 机器人
 CMD_PREFIX_MAX = 4              # 前缀限长（`/`、`!`、`#`、`..` 这种够用了）
 MENU_SUFFIX = "学习菜单"         # 默认菜单命令 = {语言} + 这个后缀，如「日语学习菜单」
+MENU_SHORT_SUFFIX = "菜单"       # 简版菜单命令 = {语言} + 这个后缀，如「日语菜单」（与学习菜单并存）
 
 COMMANDS_FILE = DATA_DIR / "commands.json"
 

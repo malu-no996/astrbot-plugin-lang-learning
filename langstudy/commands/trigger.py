@@ -58,8 +58,17 @@ def menu_trigger(lang: str) -> str:
 
 
 def menu_langs(word: str) -> list[str]:
-    """这个词命中哪些语言的「学习菜单」命令（可能多条语言重名，都算）。"""
-    return [k for k in base.LANG_KEYS if _same(menu_trigger(k), word)]
+    """这个词命中哪些语言的「学习菜单 / 菜单」命令（可能多条语言重名，都算）。
+
+    简版「菜单」（`日语菜单`）是「学习菜单」（`日语学习菜单`）的别名，复用同一套菜单逻辑，
+    命中同一语言只算一次（去重），不会发两条。
+    """
+    out: list[str] = []
+    for k in base.LANG_KEYS:
+        if _same(menu_trigger(k), word) or _same(cmdconf.default_short_menu_trigger(k), word):
+            if k not in out:
+                out.append(k)
+    return out
 
 
 def prefix_text() -> str:
@@ -95,6 +104,7 @@ def _menu_default_words() -> set[str]:
     out: set[str] = set()
     for lang in base.LANG_KEYS:
         out.add(cmdconf.default_menu_trigger(lang))
+        out.add(cmdconf.default_short_menu_trigger(lang))   # 简版「X语菜单」别名
         for kind in base.KINDS:
             out.add(f"{base.lang_label(lang)}{base.kind_label(kind)}")
         out.add(f"{base.lang_label(lang)}答题")

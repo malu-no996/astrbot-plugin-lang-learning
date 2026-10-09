@@ -54,6 +54,11 @@ def default_menu_trigger(lang: str) -> str:
     return f"{base.lang_label(lang)}{base.MENU_SUFFIX}"
 
 
+def default_short_menu_trigger(lang: str) -> str:
+    """「菜单」简版命令的默认触发词，如「日语菜单」（与「学习菜单」并存，复用同一菜单逻辑）。"""
+    return f"{base.lang_label(lang)}{base.MENU_SHORT_SUFFIX}"
+
+
 # ---------------- 语言级：菜单触发词 ----------------
 
 
