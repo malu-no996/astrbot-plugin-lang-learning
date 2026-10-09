@@ -156,6 +156,23 @@ def delete_item(lang: str, kind: str, item_id: str) -> dict | None:
     return None
 
 
+def delete_items(lang: str, kind: str, ids: list) -> int:
+    """批量删除：按 id 列表删，返回删掉几条（id 不存在的忽略）。"""
+    lang, kind = base.norm_lang(lang), base.norm_kind(kind)
+    if not lang or not kind:
+        return 0
+    wanted = {str(x) for x in (ids or [])}
+    if not wanted:
+        return 0
+    with _lock:
+        items = load_items(lang, kind)
+        kept = [it for it in items if str(it.get("id")) not in wanted]
+        removed = len(items) - len(kept)
+        if removed:
+            atomic_write(file_of(lang, kind), {"items": kept})
+    return removed
+
+
 IMPORT_MODES = ("merge", "group", "all")     # 合并去重 / 覆盖同名分组 / 清空整库
 
 

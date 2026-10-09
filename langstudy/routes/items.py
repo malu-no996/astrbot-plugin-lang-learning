@@ -144,6 +144,21 @@ async def api_item_delete():
     return ok(message=f"已删除：{old.get('term') or old.get('id')}")
 
 
+async def api_item_delete_many():
+    """批量删除：一次删掉勾选的多条（按 id 列表）。"""
+    payload = await body()
+    lang, kind = base.norm_lang(payload.get("lang")), base.norm_kind(payload.get("kind"))
+    if not lang or not kind:
+        return fail("缺少语言或类型")
+    ids = payload.get("ids")
+    if not isinstance(ids, list) or not ids:
+        return fail("没有要删除的条目")
+    removed = store.delete_items(lang, kind, [str(x) for x in ids])
+    if not removed:
+        return fail("没有匹配到可删除的条目")
+    return ok(removed=removed, message=f"已删除 {removed} 条")
+
+
 # ---------------- 导入 / 导出（Anki 兼容） ----------------
 
 
@@ -241,6 +256,7 @@ ROUTES = [
     ("group/delete", "POST", api_group_delete, "分组删除"),
     ("item/save", "POST", api_item_save, "新增/修改条目"),
     ("item/delete", "POST", api_item_delete, "删除条目"),
+    ("item/delete-many", "POST", api_item_delete_many, "批量删除条目"),
     ("import/preview", "POST", api_import_preview, "导入预览（base64）"),
     ("import/commit", "POST", api_import_commit, "导入提交"),
     ("export", "GET", api_export, "导出为文本（base64）"),

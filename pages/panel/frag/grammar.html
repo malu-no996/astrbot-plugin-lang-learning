@@ -35,6 +35,10 @@
            @change="lsGrammarPickFile($event)">
     <button @click="lsGrammarExport('all')">导出全部（Anki 可用）</button>
     <button @click="lsGrammarExport('query')">导出当前筛选</button>
+    <button @click="lsGrammarRemoveSelected()" :disabled="!Object.keys(ls.grammar.selected).length"
+            :class="{'ls-btn-danger': Object.keys(ls.grammar.selected).length}">
+      删除选中（{{ Object.keys(ls.grammar.selected).length }}）
+    </button>
     <span class="muted">
       共 {{ ls.grammar.total }} 条 · 第 {{ ls.grammar.page }}/{{ ls.grammar.pages }} 页
     </span>
@@ -112,6 +116,7 @@
   <table class="ls-table" v-if="ls.grammar.list.length">
     <thead>
       <tr>
+        <th style="width:4%"><input type="checkbox" :checked="ls.grammar.selectAll" @change="lsGrammarSelectAll()"></th>
         <th style="width:17%">句型</th>
         <th style="width:10%">分组</th>
         <th style="width:12%">结构</th>
@@ -119,11 +124,12 @@
         <th style="width:20%">例句</th>
         <th style="width:7%">标签</th>
         <th style="width:4%">等级</th>
-        <th style="width:10%">操作</th>
+        <th style="width:6%">操作</th>
       </tr>
     </thead>
     <tbody>
       <tr v-for="(it, i) in ls.grammar.list" :key="it.id">
+        <td><input type="checkbox" :checked="!!ls.grammar.selected[it.id]" @change="lsGrammarToggleSelect(it)"></td>
         <td>{{ it.term }}</td>
         <td class="muted">{{ it.group || '未分组' }}</td>
         <td>{{ it.reading }}</td>
