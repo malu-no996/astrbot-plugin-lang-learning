@@ -104,10 +104,12 @@ async def _safe_run(label: str, coro) -> str:
     return f"❌ {label}：{res.get('message') or '执行失败'}"
 
 
-async def _run_quiz(rule: dict, target: dict, overrides: dict | None = None) -> dict:
+async def _run_quiz(rule: dict, target: dict, overrides: dict | None = None,
+                   reply_msg_id: str | None = None) -> dict:
     """出一道题（页面「立即出题」同一条路）。
 
     `overrides` = 命令里带的参数，**只覆盖这一次调用**，不写回规则。
+    `reply_msg_id` = 触发消息 ID，官方机器人被动回复必须带，否则会判成主动消息。
 
     ⚠️ 最前面那道「形状检查」不是多余的：曾经因为把推送规则当答题规则传进来，用户发
     「日语单词」却收到「❌ 日语答题：无可用题目」—— 推送规则根本没有题源口径。
@@ -116,7 +118,8 @@ async def _run_quiz(rule: dict, target: dict, overrides: dict | None = None) -> 
     if "window_seconds" not in rule:      # 答题规则必有此键（DEFAULT_QUIZ_RULE），推送规则没有
         logger.warning(f"外语命令：答题入口拿到了非答题规则（{str(rule)[:120]}）")
         return {"ok": False, "message": "这条是推送规则、不是答题规则（命令分派错了，看日志）"}
-    return await quiz_session.open_session({**rule, **target, **(overrides or {})})
+    return await quiz_session.open_session({**rule, **target, **(overrides or {})},
+                                           reply_msg_id=reply_msg_id)
 
 
 # ---------------- 总入口 ----------------
@@ -131,6 +134,7 @@ async def handle_message(event) -> str | None:
     platform_id = str(event.get_platform_id() or "").strip()
     group_id = str(event.get_group_id() or "").strip()
     sender_id = str(event.get_sender_id() or "").strip()
+    message_id = str(event.get_message_id() or "").strip() or None
 
     if group_id:
         # 官方机器人没有「所在群列表」接口，面板的群下拉靠「见过的会话」积累
@@ -174,7 +178,8 @@ async def handle_message(event) -> str | None:
     lines: list[str] = []
     for lang in menus:
         label = f"{base.lang_label(lang)}{base.MENU_SUFFIX}"
-        result = await _safe_run(label, run_menu(platform_id, "group", group_id, lang))
+        result = await _safe_run(label, run_menu(platform_id, "group", group_id, lang,
+                                                reply_msg_id=message_id))
         if result:
             lines.append(result)
 
@@ -201,8 +206,9 @@ async def handle_message(event) -> str | None:
             continue
         multi = len(rows) > 1
         for row in rows:
-            run = (_run_quiz(rule, row, overrides) if is_quiz
-                   else push_mod.run_rule(ident, "命令", rule=rule, target=row))
+            run = (_run_quiz(rule, row, overrides, reply_msg_id=message_id) if is_quiz
+                   else push_mod.run_rule(ident, "命令", rule=rule, target=row,
+                                          reply_msg_id=message_id))
             result = await _safe_run(label + tgt.where(row, multi), run)
             if result:
                 lines.append(result)

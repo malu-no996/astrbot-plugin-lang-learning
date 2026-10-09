@@ -161,7 +161,8 @@ async def close_session(rid: str) -> None:
                 logger.debug(f"答题：补昵称失败（已忽略）：{exc}")
             text = render.result_text(q, correct, wrong, rule)
             try:
-                await sender.send_text(pid, rule.get("target_type"), tid, text)
+                await sender.send_text(pid, rule.get("target_type"), tid, text,
+                                       reply_msg_id=rule.get("reply_msg_id"))
             except Exception as exc:  # noqa: BLE001
                 logger.warning(f"答题：结果发送失败：{exc}")
         summary = f"答完：对 {len(correct)} / 错 {len(wrong)}（共 {len(s.get('answers', {}))} 人作答）"
@@ -193,7 +194,7 @@ async def _fill_official_names(rule: dict, session: dict) -> None:
 # ---------------- 出题 ----------------
 
 
-async def open_session(rule: dict) -> dict:
+async def open_session(rule: dict, reply_msg_id: str | None = None) -> dict:
     """抽一道题、发出去、开一个答题会话。返回结果 dict（含是否成功）。"""
     rid = str(rule.get("id"))
     now = time.time()
@@ -215,12 +216,13 @@ async def open_session(rule: dict) -> dict:
         return {"ok": False, "message": BUSY_MSG}
     _OPENING.add(busy)
     try:
-        return await _open_session_locked(rule, rid, now, pid, tkey)
+        return await _open_session_locked(rule, rid, now, pid, tkey, reply_msg_id)
     finally:
         _OPENING.discard(busy)
 
 
-async def _open_session_locked(rule: dict, rid: str, now: float, pid: str, tkey: str) -> dict:
+async def _open_session_locked(rule: dict, rid: str, now: float, pid: str, tkey: str,
+                                reply_msg_id: str | None = None) -> dict:
     """真正开题（进来前已确认本群没有进行中的题，且已占位）。"""
     prev = find_open_session(pid, [tkey])
     if prev is not None:
@@ -251,10 +253,12 @@ async def _open_session_locked(rule: dict, rid: str, now: float, pid: str, tkey:
     if audio:
         # 听力题：**音频单独一条，先发**（真音频消息，群员点开就能放；不是正文里的链接）。
         # 发成功了才把正文里那行「听力音频：<url>」去掉；发不出去就留着当兜底链接。
-        if await sender.send_audio(pid, rule.get("target_type"), str(rule.get("target_id") or ""), audio):
+        if await sender.send_audio(pid, rule.get("target_type"), str(rule.get("target_id") or ""), audio,
+                                  reply_msg_id=reply_msg_id):
             text = render.drop_audio_line(text)
     try:
-        await sender.send_text(pid, rule.get("target_type"), str(rule.get("target_id") or ""), text, keyboard=kb)
+        await sender.send_text(pid, rule.get("target_type"), str(rule.get("target_id") or ""), text, keyboard=kb,
+                               reply_msg_id=reply_msg_id)
     except Exception as exc:  # noqa: BLE001
         msg = f"发送题目失败：{exc}"
         logger.warning(f"答题：{msg}")

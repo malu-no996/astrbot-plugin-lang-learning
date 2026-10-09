@@ -29,7 +29,8 @@ def _target_of(rule: dict) -> tuple[str, str, str]:
 
 
 async def run_rule(rule_id: str, source: str = "auto",
-                   rule: dict | None = None, target: dict | None = None) -> dict:
+                   rule: dict | None = None, target: dict | None = None,
+                   reply_msg_id: str | None = None) -> dict:
     """按一条规则推一次。`source` 只用于展示（auto=定时 / web=页面按钮 / 命令）。"""
     rule = rule if isinstance(rule, dict) else rules_store.get_rule(rule_id)
     if rule is None:
@@ -56,7 +57,7 @@ async def run_rule(rule_id: str, source: str = "auto",
 
     text = textutil.render_message(rule, items)
     try:
-        await sender.send_text(pid, ttype, tid, text)
+        await sender.send_text(pid, ttype, tid, text, reply_msg_id=reply_msg_id)
     except Exception as exc:  # noqa: BLE001
         msg = f"发送失败：{exc}"
         logger.warning(f"外语学习推送失败（{base.lang_label(lang)}{base.kind_label(kind)}）：{exc}")

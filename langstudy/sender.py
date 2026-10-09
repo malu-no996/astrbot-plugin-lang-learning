@@ -66,8 +66,12 @@ def _official_api(platform_id: str):
 
 
 async def _send_official(platform_id: str, target_type: str, target_id: str,
-                         text: str, keyboard: dict | None = None) -> None:
+                         text: str, keyboard: dict | None = None,
+                         reply_msg_id: str | None = None) -> None:
     """官方机器人发**一条** markdown 消息（`keyboard` 有就一并挂上，按钮只能挂 markdown 上）。
+
+    `reply_msg_id`：被动回复时必须传触发消息的消息 ID，否则官方会判定为「主动消息」并
+    以「无权限」拒绝。定时推送 / 主动任务不传即可（走主动消息通道，需机器人有主动权限）。
 
     三档降级（每档都记日志，别静默）：
       ① markdown + 按钮  → ② markdown（去掉按钮）→ ③ 纯文本 content。
@@ -98,6 +102,9 @@ async def _send_official(platform_id: str, target_type: str, target_id: str,
     payload: dict = {"msg_type": 2, "markdown": {"content": md}}
     if keyboard:
         payload["keyboard"] = keyboard
+    if reply_msg_id:
+        # 被动回复必须引用触发消息 ID；主动任务/定时推送不要传
+        payload["msg_id"] = str(reply_msg_id)
     try:
         await _post(payload)
         if keyboard is not None:
@@ -111,17 +118,19 @@ async def _send_official(platform_id: str, target_type: str, target_id: str,
         logger.warning(f"外语学习：官方 markdown 发送失败：{exc}")
         if not keyboard:
             # 没带按钮还失败 → 直接走 ③
-            await _post({"msg_type": 0, "content": text})
+            await _post({"msg_type": 0, "content": text, **({"msg_id": str(reply_msg_id)} if reply_msg_id else {})})
             return
     # ② 去掉按钮再发一次 markdown
     try:
-        await _post({"msg_type": 2, "markdown": {"content": md}})
+        await _post({"msg_type": 2, "markdown": {"content": md},
+                     **({"msg_id": str(reply_msg_id)} if reply_msg_id else {})})
         logger.warning(f"外语学习：官方按钮未渲染（已降级为不带按钮的 markdown）：{sid}")
         return
     except Exception as exc:  # noqa: BLE001
         logger.warning(f"外语学习：官方去掉按钮后仍失败，退纯文本：{exc}")
     # ③ 兜底纯文本
-    await _post({"msg_type": 0, "content": text})
+    await _post({"msg_type": 0, "content": text,
+                 **({"msg_id": str(reply_msg_id)} if reply_msg_id else {})})
 
 
 def _kb_count(keyboard: dict | None) -> int:
@@ -137,8 +146,12 @@ def _kb_count(keyboard: dict | None) -> int:
 
 
 async def send_text(platform_id: str, target_type: str, target_id: str, text: str,
-                    keyboard: dict | None = None) -> None:
+                    keyboard: dict | None = None,
+                    reply_msg_id: str | None = None) -> None:
     """发**一条**消息。`keyboard` 只有 QQ 官方群聊用得上（答题选项 / 学习菜单按钮）。
+
+    `reply_msg_id`：命令被动回复时带上用户触发消息的消息 ID；官方机器人发群消息必须
+    这样才能避免被判成「主动消息」（出错：主动消息失败，无权限）。
 
     失败一律抛异常，由调用方决定「记进规则状态 / 回一句话给用户」。
     """
@@ -148,7 +161,7 @@ async def send_text(platform_id: str, target_type: str, target_id: str, text: st
     if not str(platform_id or "").strip():
         raise RuntimeError("未指定发送用的平台实例")
     if platforms.is_official(platform_id):
-        await _send_official(platform_id, target_type, target_id, text, keyboard)
+        await _send_official(platform_id, target_type, target_id, text, keyboard, reply_msg_id)
         return
     if keyboard is not None:
         # OneBot 没有按钮段 —— 这里只是记一句，正文照发（正文里本来就列了选项）
@@ -226,8 +239,11 @@ def _audio_filename(url: str) -> str:
     return name if "." in name else "audio.mp3"
 
 
-async def send_audio(platform_id: str, target_type: str, target_id: str, url: str) -> bool:
+async def send_audio(platform_id: str, target_type: str, target_id: str, url: str,
+                     reply_msg_id: str | None = None) -> bool:
     """**单独发一条音频**（真音频消息，不是正文里的链接）。成功 True，失败/不支持 False。
+
+    `reply_msg_id`：被动回复时带上触发消息 ID，避免官方判为主动消息。
 
     失败一律返回 False（异常吞掉只记 warning），由调用方降级 —— 听力题那边会退化成
     正文里给一行链接，至少还能点开听。
@@ -244,9 +260,13 @@ async def send_audio(platform_id: str, target_type: str, target_id: str, url: st
             if media is None:
                 return False
             api = _official_api(platform_id)
-            await api.post_group_message(group_openid=str(target_id).strip(),
-                                         msg_type=7, media=media,
-                                         msg_seq=random.randint(1, 10000))
+            seq = random.randint(1, 10000)
+            payload = {"group_openid": str(target_id).strip(),
+                       "msg_type": 7, "media": media,
+                       "msg_seq": seq}
+            if reply_msg_id:
+                payload["msg_id"] = str(reply_msg_id)
+            await api.post_group_message(**payload)
             logger.info("外语学习：音频已作为官方富媒体发出（group=%s）", target_id)
             return True
         from astrbot.api.message_components import Record

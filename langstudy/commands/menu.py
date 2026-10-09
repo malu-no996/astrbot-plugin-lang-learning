@@ -61,7 +61,8 @@ def menu_body(lang: str, items: list[dict], has_buttons: bool) -> str:
     return "\n".join(lines)
 
 
-async def run_menu(platform_id: str, target_type: str, target_id: str, lang: str) -> dict:
+async def run_menu(platform_id: str, target_type: str, target_id: str, lang: str,
+                   reply_msg_id: str | None = None) -> dict:
     """发一条「学习菜单」：官方 = markdown + 按钮；其它 = 纯文字清单。"""
     items = menu_items(lang)
     if not items:
@@ -69,7 +70,8 @@ async def run_menu(platform_id: str, target_type: str, target_id: str, lang: str
     kb = keyboard.build(items, per_row=PER_ROW) if platforms.is_official(platform_id) else None
     text = menu_body(lang, items, has_buttons=kb is not None)
     try:
-        await sender.send_text(platform_id, target_type, target_id, text, keyboard=kb)
+        await sender.send_text(platform_id, target_type, target_id, text, keyboard=kb,
+                               reply_msg_id=reply_msg_id)
     except Exception as exc:  # noqa: BLE001
         logger.warning(f"外语菜单：发送失败：{exc}")
         return {"ok": False, "message": f"发送失败：{exc}"}
