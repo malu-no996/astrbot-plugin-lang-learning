@@ -1,0 +1,87 @@
+<!-- 外语学习面板骨架（pages/panel/partial.html）
+     本文件是 AstrBot 插件页的「可编辑源」。构建脚本 build_index.js 会把它与 frag/*.html
+     内联成 index.html（AstrBot 的插件页只静态服务 index.html，没有 config_web 那种
+     「FRAG:xxx」服务端拼装，所以必须内联）。改了这里或 frag/*.html 后重跑：
+       node build_index.js
+
+     骨架只放：标题 + 模块开关 + **语言一排**（英语/日语/韩语/泰语）+ **子页签一排**
+     （单词管理 / 语法管理 / 题库管理 / 答题推送 / 单词·语法推送 / 新闻推送 / 命令配置），
+     子页面各自是 frag/ 下的 html：
+
+       单词管理   frag/vocab.html    window.LsVocab      ← 由 items-core 提供通用词表逻辑
+       语法管理   frag/grammar.html  window.LsGrammar    ← 同上（同一套逻辑，换 key）
+       题库管理   frag/bank.html                      ← 只有 html；逻辑与答题推送共用 window.LsQuiz
+       答题推送   frag/quiz.html     window.LsQuiz       ← 出题规则（题库在上一页）
+       单词/语法推送 frag/push.html   window.LsPush
+       新闻推送   frag/news.html     window.LsNews
+       命令配置   frag/commands.html window.LsCommands   ← 触发词集中改（写回各自规则 / 菜单配置）
+       编辑浮层   frag/editor.html   window.LsEditor     ← 浮层必须挂在“子页 v-show 容器”之外，
+                                                          否则父元素 display:none 时 position:fixed 也看不见
+
+     单词页与语法页的字段结构完全一致（只有页面文案不同），所以逻辑写在共同的
+     js/frag/items-core.js 里，vocab.js / grammar.js 各用不同 key 包一层，避免两份拷贝。
+
+     模块开关：在 AstrBot 里本插件自己的启用状态由 _conf_schema.json 的 enabled 控制，
+     这里的 checkbox 调用 window.LsVocab 体系里的 lsModToggle / ls.mod（见 js/module.js），
+     不再依赖外层 config_web 框架的 moduleOn / moduleToggle。
+
+     共享状态 ls（当前语言 / 当前子页 / 计数）与工具在 js/module.js。 -->
+    <div class="card">
+      <h2>
+        外语学习 <span class="hint">单词 / 语法 · Anki 导入导出 · QQ 定时推送</span>
+        <span class="ls-mod-switch">
+          <label class="ls-switch">
+            <input type="checkbox" :checked="ls.mod.on"
+                   :disabled="ls.mod.busy" @change="lsModToggle($event.target.checked)">
+            <span :style="ls.mod.on ? 'color:var(--ok)' : 'color:var(--err)'">
+              {{ ls.mod.on ? '模块已启用' : '模块已禁用' }}
+            </span>
+          </label>
+        </span>
+      </h2>
+
+      <div class="warn" v-if="!ls.mod.on">
+        外语学习模块当前<strong>已禁用</strong>：所有接口返回 404、后台推送循环空转（不推消息）。
+        词库与推送规则都会保留，勾选上面的开关即可重新启用。
+      </div>
+      <p v-if="ls.mod.message" class="muted" :style="ls.mod.ok ? '' : 'color:var(--err)'">{{ ls.mod.message }}</p>
+
+      <!-- 一级分类：语言（四种语言各自独立的词库 / 语法库 / 推送规则） -->
+      <nav class="tabs ls-langs">
+        <span v-for="l in lsLangs" :key="l.key" class="tab" :class="{active: ls.lang===l.key}" @click="lsLangTo(l.key)">
+          {{ l.label }}
+          <span class="badge online" v-if="lsCount(l.key,'vocab') || lsCount(l.key,'grammar')">
+            {{ lsCount(l.key,'vocab') + lsCount(l.key,'grammar') }}
+          </span>
+        </span>
+      </nav>
+
+      <p class="muted ls-status">
+        当前：<strong>{{ lsLangLabel() }}</strong> · 单词 {{ lsCount(ls.lang,'vocab') }} 条 ·
+        语法 {{ lsCount(ls.lang,'grammar') }} 条 · 推送规则 {{ lsRuleCount(ls.lang) }} 条
+      </p>
+
+      <!-- 二级页签：单词 / 语法 / 题库 / 答题推送 / 单词·语法推送 / 新闻 / 命令配置 -->
+      <nav class="tabs ls-subs">
+        <span class="tab" :class="{active: ls.tab==='vocab'}" @click="lsTabTo('vocab')">单词管理</span>
+        <span class="tab" :class="{active: ls.tab==='grammar'}" @click="lsTabTo('grammar')">语法管理</span>
+        <span class="tab" :class="{active: ls.tab==='bank'}" @click="lsTabTo('bank')">
+          题库管理<span v-if="ls.quiz.total" class="badge online" style="margin-left:6px">{{ ls.quiz.total }}</span>
+        </span>
+        <span class="tab" :class="{active: ls.tab==='quiz'}" @click="lsTabTo('quiz')">答题推送</span>
+        <span class="tab" :class="{active: ls.tab==='push'}" @click="lsTabTo('push')">
+          单词/语法推送<span v-if="lsRuleCount(ls.lang)" class="badge online" style="margin-left:6px">{{ lsRuleCount(ls.lang) }}</span>
+        </span>
+        <span class="tab" :class="{active: ls.tab==='news'}" @click="lsTabTo('news')">新闻推送</span>
+        <span class="tab" :class="{active: ls.tab==='commands'}" @click="lsTabTo('commands')">命令配置</span>
+      </nav>
+
+      <!--FRAG:vocab-->
+      <!--FRAG:grammar-->
+      <!--FRAG:bank-->
+      <!--FRAG:quiz-->
+      <!--FRAG:push-->
+      <!--FRAG:news-->
+      <!--FRAG:commands-->
+      <!--FRAG:editor-->
+    </div>

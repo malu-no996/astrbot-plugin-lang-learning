@@ -1,0 +1,235 @@
+<!-- frag/bank.html —— 题库管理（二级页签「题库管理」的内容）
+
+     原先是答题页里的第三层小页签，现独立成二级页签（排在「语法管理」后面）。
+     逻辑**仍与答题推送共用一个 js**（frag/quiz.js / window.LsQuiz）：两者本来就是同一个后端
+     模块（quiz.py / quiz_routes.py），共用题型/分组/题库包这几份候选数据，拆成两个 js
+     反而要来回同步状态。原因在 quiz.html 顶部也写了一遍。
+
+     ⚠️ 浮层（题目编辑 / 导入题库包 / 批量导入）写在本文件顶层、**v-show 容器之外** ——
+     父元素 display:none 时 position:fixed 的浮层一样不出来。 -->
+<div v-show="ls.tab==='bank'">
+  <p class="muted">
+    <strong>{{ lsLangLabel() }}</strong>题库：一份题 = 一个「题库包」= 一个分组（分组名=题目来源）。
+    <span class="ls-hint">题库按语言分开存放 —— 这里只看得到当前语言的题。导入时包自带
+    <code>_meta.lang</code> 就用它写的，没写就落成当前语言。    题库内容<strong>不进 git</strong>，
+    全在你本机 <code>data/langstudy/quiz_bank/</code> 下：备份/搬家用「导出 zip」，换机器用「导入题库包」。
+    下面的「题库包」下拉同时也是这页的筛选器 —— 选一个包就只看它的题，选「全部题库包」看全部。</span>
+  </p>
+
+  <div class="ls-toolbar">
+    <button @click="lsQuizQEditOpen(null)">+ 新增题目</button>
+    <button @click="lsQuizQImportOpen()">批量导入 JSON</button>
+    <input class="ls-input ls-grow" v-model="ls.quiz.q" placeholder="搜题目 / 选项 / 解析" @keyup.enter="lsQuizQSearch()">
+    <!-- ⚠️ 所有「v-model + @change」的 select 都必须把 $event 和字段名一起传进处理函数：
+         Vue 3 里 v-model 是 vModelSelect 指令注册的 change 监听，**比模板上的 @change 晚注册**，
+         所以 @change 先跑、此时 v-model 绑定的值还是旧的（慢一拍 / 看起来没反应）。 -->
+    <select class="ls-input" v-model="ls.quiz.qlevel" @change="lsQuizQSearch($event, 'qlevel')">
+      <option value="">全部等级</option>
+      <option v-for="l in ls.quiz.levels" :key="l" :value="l">{{ l }}</option>
+    </select>
+    <select class="ls-input" v-model="ls.quiz.qtype" @change="lsQuizQSearch($event, 'qtype')">
+      <option value="">全部题型</option>
+      <option v-for="t in ls.quiz.types" :key="t.key" :value="t.key">{{ t.label }}</option>
+    </select>
+    <select class="ls-input" v-model="ls.quiz.qgroup" @change="lsQuizQSearch($event, 'qgroup')">
+      <option value="">全部分组</option>
+      <option v-for="g in ls.quiz.groups" :key="g" :value="g">{{ g }}</option>
+    </select>
+    <button @click="lsQuizQSearch()">搜索</button>
+    <button @click="lsQuizQReset()">重置</button>
+    <span class="muted">
+      共 {{ ls.quiz.total }} 道（题库包 {{ ls.quiz.seedCount }} · 自建 {{ ls.quiz.userCount }}）
+    </span>
+  </div>
+
+  <!-- 题库包：一份题 = 一个包 = 一个分组 + 一种语言；导出/导入就是搬这个 zip -->
+  <div class="ls-toolbar">
+    <span class="muted">题库包（{{ lsLangLabel() }}）</span>
+    <!-- 这个下拉是**列表过滤器**：选了就只看这个包的题，空 = 全部包（导出/删除也用这份选择） -->
+    <select class="ls-input" v-model="ls.quiz.bankPick" @change="lsQuizBankPickChanged($event)">
+      <option value="">全部题库包（{{ ls.quiz.banks.length }} 个）</option>
+      <option v-for="b in ls.quiz.banks" :key="b.id" :value="b.id">
+        {{ b.name }}（{{ b.group }} · {{ b.count }} 道）
+      </option>
+    </select>
+    <button @click="lsQuizBankExportOne()" :disabled="ls.quiz.bankBusy">导出所选 zip</button>
+    <button @click="lsQuizBankExportAll()" :disabled="ls.quiz.bankBusy">导出本语言全部</button>
+    <button @click="lsQuizBankAskOpen()" :disabled="ls.quiz.bankBusy">导入题库包</button>
+    <button class="ls-btn-xs" :class="{'ls-btn-danger': ls.quiz.bankConfirm}"
+            @click="lsQuizBankDelete()" :disabled="ls.quiz.bankBusy">
+      {{ ls.quiz.bankConfirm ? '确认删除题库包' : '删除所选包' }}
+    </button>
+    <input type="file" id="lsQuizBankFile" accept=".zip,.json" style="display:none"
+           @change="lsQuizBankPickFile($event)">
+    <span class="muted">{{ lsQuizBankInfo() }}</span>
+  </div>
+
+  <p v-if="ls.quiz.bankLoading" class="muted">加载中…</p>
+  <p v-else-if="!ls.quiz.list.length" class="muted">没有符合条件的题目。</p>
+
+  <template v-else>
+    <table class="ls-table">
+      <thead>
+        <tr>
+          <th style="width:7%">等级</th>
+          <th style="width:9%">题型</th>
+          <th style="width:30%">题目</th>
+          <th style="width:14%">正确答案</th>
+          <th style="width:17%">分组 / 来源</th>
+          <th style="width:23%">操作</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr v-for="it in ls.quiz.list" :key="it.id">
+          <td>{{ it.level }}</td>
+          <td>
+            {{ it.type_label || it.type }}
+            <span v-if="it.audio" class="ls-hint" title="带音频">♪</span>
+          </td>
+          <td><div class="ls-cell-clip">{{ it.question }}</div></td>
+          <td><div class="ls-cell-clip">{{ it.answer }}</div></td>
+          <td>
+            <div class="ls-cell-clip">{{ it.group }}</div>
+            <span class="badge" :class="it.excluded ? 'offline' : (it.seed ? 'online' : '')">
+              {{ it.excluded ? '已排除' : (it.seed ? '题库包' : '自建') }}
+            </span>
+          </td>
+          <td>
+            <button class="ls-btn-xs" @click="lsQuizQExclude(it)">{{ it.excluded ? '恢复' : '排除' }}</button>
+            <button class="ls-btn-xs" v-if="!it.seed" @click="lsQuizQEditOpen(it)">编辑</button>
+            <button class="ls-btn-xs" v-if="!it.seed"
+                    :class="{'ls-btn-danger': ls.quiz.confirmId===it.id}"
+                    @click="lsQuizQDelete(it)">
+              {{ ls.quiz.confirmId===it.id ? '确认删除' : '删除' }}
+            </button>
+          </td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="ls-pager">
+      <button class="ls-btn-xs" :disabled="ls.quiz.page<=1" @click="lsQuizQPage(-1)">上一页</button>
+      <span class="muted">第 {{ ls.quiz.page }} / {{ ls.quiz.pages }} 页</span>
+      <button class="ls-btn-xs" :disabled="ls.quiz.page>=ls.quiz.pages" @click="lsQuizQPage(1)">下一页</button>
+    </div>
+  </template>
+
+  <p class="muted">
+    题库包里的题只能「排除」（不参与抽题，可随时恢复）、删不掉；自建的题才能编辑和删除。
+    题目带 <code>audio</code> 就是听力题：出题时会<strong>先单独发一条音频</strong>（真音频消息，群员直接就能播），
+    再发题目文字 —— OneBot 与官方机器人都一样；只有音频发不出去时才会退化成正文里给一行链接。
+  </p>
+</div>
+
+<!-- ============ 浮层：题目编辑（只改自建题） ============ -->
+<div class="modal" v-if="ls.quiz.qform" @click.self="lsQuizQCancel()">
+  <div class="modal-box">
+    <h3>{{ ls.quiz.qform.id ? '编辑题目' : '新增题目' }}</h3>
+
+    <div class="row">
+      <label class="ls-field">
+        <span>等级（可留空）</span>
+        <input class="ls-input" v-model="ls.quiz.qform.level" list="lsQuizLevels" placeholder="N5 / A1 …">
+      </label>
+      <label class="ls-field">
+        <span>题型</span>
+        <select class="ls-input" v-model="ls.quiz.qform.type">
+          <option v-for="t in ls.quiz.types" :key="t.key" :value="t.key">{{ t.label }}</option>
+        </select>
+      </label>
+      <label class="ls-field">
+        <span>难度（1~5）</span>
+        <input class="ls-input" type="number" min="1" max="5" v-model.number="ls.quiz.qform.difficulty">
+      </label>
+      <label class="ls-field">
+        <span>知识点（可选）</span>
+        <input class="ls-input" v-model="ls.quiz.qform.topic" placeholder="例：受身形">
+      </label>
+    </div>
+
+    <label class="ls-field ls-field-wide">
+      <span>题干</span>
+      <textarea class="ls-input ls-textarea" v-model="ls.quiz.qform.question" placeholder="例：「水」の読み方は？"></textarea>
+    </label>
+
+    <label class="ls-field ls-field-wide">
+      <span>听力音频 URL（可选；填了就算听力题）</span>
+      <input class="ls-input" v-model="ls.quiz.qform.audio" placeholder="https://.../audio.mp3（OneBot 群直接发语音；官方机器人只给链接）">
+    </label>
+
+    <label class="ls-field ls-field-wide">
+      <span>选项（每行一个，一般写 4 个）</span>
+      <textarea class="ls-input ls-textarea" v-model="ls.quiz.qform.optionsText" placeholder="みず&#10;すい&#10;みづ&#10;すいり"></textarea>
+    </label>
+
+    <label class="ls-field ls-field-wide">
+      <span>正确答案（从上面某一行里挑）</span>
+      <select class="ls-input" v-if="ls.quiz.qform.optionsText" v-model="ls.quiz.qform.answer">
+        <option v-for="o in lsQuizQOptions()" :key="o" :value="o">
+          {{ o }}
+        </option>
+      </select>
+      <input class="ls-input" v-else v-model="ls.quiz.qform.answer">
+      <span class="ls-hint">存的是**原文**（不是 A/B/C/D），发送时自动打乱顺序再编号。</span>
+    </label>
+
+    <label class="ls-field ls-field-wide">
+      <span>答案解析（可选）</span>
+      <textarea class="ls-input ls-textarea" v-model="ls.quiz.qform.explanation" placeholder="为什么选它、其它选项错在哪"></textarea>
+    </label>
+
+    <!-- 等级候选来自当前语言的题库（N5~N1 / A1~C2 …），也可以自己手打一个 -->
+    <datalist id="lsQuizLevels">
+      <option v-for="l in ls.quiz.levels" :key="l" :value="l"></option>
+    </datalist>
+
+    <div class="actions">
+      <button @click="lsQuizQCancel()">取消</button>
+      <button @click="lsQuizQSave()">保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ 浮层：导入题库包（先选导入方式，再弹文件框） ============ -->
+<div class="modal" v-if="ls.quiz.bankAsk" @click.self="lsQuizBankAskClose()">
+  <div class="modal-box">
+    <h3>导入题库包</h3>
+    <p class="muted">
+      支持 <code>.zip</code>（里面可以有多个 <code>.json</code> 题库包）或单个 <code>.json</code>。
+      包的 id 取自 <code>_meta.id</code>，没有就用文件名；分组取自 <code>_meta.group</code>；
+      语言取自 <code>_meta.lang</code>，<strong>没写就落成当前语言（{{ lsLangLabel() }}）</strong>。
+    </p>
+    <p class="muted">
+      <b>合并导入</b>：保留包里原有的题，按题目 id 覆盖同名题 —— 反复导同一份不会翻倍，推荐。<br>
+      <b>替换导入</b>：整个包换掉，原先那个包里的题会丢。
+    </p>
+    <div class="actions">
+      <button @click="lsQuizBankAskClose()">取消</button>
+      <button @click="lsQuizBankAskGo('merge')">合并导入</button>
+      <button @click="lsQuizBankAskGo('replace')">替换导入</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ 浮层：批量导入 ============ -->
+<div class="modal" v-if="ls.quiz.importShow" @click.self="lsQuizQImportClose()">
+  <div class="modal-box">
+    <h3>批量导入题目</h3>
+    <p class="muted">
+      贴一个 JSON 数组（或含 <code>items</code> 数组的对象），每题字段：
+      <code>level</code> <code>type</code> <code>question</code> <code>options</code>（数组）
+      <code>answer</code>（必须是某个选项原文）<code>explanation</code> <code>topic</code> <code>difficulty</code>
+      <code>group</code>（分组，留空算「自建」）<code>audio</code>（听力音频 URL，可选）。
+      这些题会落进<strong>当前语言（{{ lsLangLabel() }}）</strong>的「自建」题库包，想成包搬走就用上面的「导出 zip」。
+    </p>
+    <label class="ls-field ls-field-wide">
+      <span>JSON 内容</span>
+      <textarea class="ls-input ls-textarea" style="min-height:180px" v-model="ls.quiz.importText"
+                placeholder='[{"level":"N5","type":"詞彙","question":"...","options":["a","b","c","d"],"answer":"a"}]'></textarea>
+    </label>
+    <div class="actions">
+      <button @click="lsQuizQImportClose()">取消</button>
+      <button @click="lsQuizQImport()">导入</button>
+    </div>
+  </div>
+</div>

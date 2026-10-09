@@ -1,0 +1,215 @@
+<!-- frag/news.html —— 新闻推送模块（二级页签「新闻推送」）
+     按当前语言显示来源：日语=Yahoo! ニュース（可配置关注分类 / 立即采集 / 查看新闻）；
+     其它语言=占位「暂无来源」。推送规则区把采集到的新闻推到 QQ 群。 -->
+<div v-show="ls.tab==='news'">
+  <p class="muted">
+    <strong>{{ lsLangLabel() }}</strong>的新闻来源。日语当前接入 <strong>Yahoo! ニュース</strong>，
+    每个分类一个 RSS；你可以只勾选<strong>想关注的分类</strong>，后端只采集这些（不关注的类别根本不下载）。
+    「推送规则」把采集到的新闻按实例 / 群 / 时刻发到 QQ。<span class="ls-hint">后续要加别的媒体，
+    只要在后端 <code>news.SOURCES</code> 里加一项即可，这里会自动多出对应来源。</span>
+  </p>
+
+  <!-- 当前语言没有来源 → 占位 -->
+  <p v-if="!ls.news.sources.length" class="warn">
+    当前语言（{{ lsLangLabel() }}）<strong>暂无已接入的新闻来源</strong>。后续扩展（非 Yahoo、或其它语言源）会在这里出现。
+  </p>
+
+  <!-- 来源卡片 -->
+  <div v-for="src in ls.news.sources" :key="src.id" class="ls-card">
+    <div class="ls-card-head">
+      <strong>{{ src.name }}</strong>
+      <label class="ls-switch">
+        <input type="checkbox" v-model="src.cfg.enabled">
+        <span>{{ src.cfg.enabled ? '已启用' : '已停用' }}</span>
+      </label>
+    </div>
+
+    <div class="ls-toolbar">
+      <label class="ls-field ls-field-sm">
+        <span>采集间隔(分)</span>
+        <input class="ls-input" type="number" min="30" max="1440" v-model.number="src.cfg.interval_minutes">
+      </label>
+      <label class="ls-switch">
+        <input type="checkbox" v-model="src.cfg.auto_collect">
+        <span>后台自动采集</span>
+      </label>
+      <button class="ls-btn-xs ls-btn-primary" @click="lsNewsCollect(src)" :disabled="ls.news.pushBusy">立即采集</button>
+      <button class="ls-btn-xs" @click="lsNewsSourceCfgSave(src)">保存采集设置</button>
+      <button class="ls-btn-xs" @click="lsNewsItems(src)">查看最近新闻</button>
+    </div>
+
+    <p class="muted">
+      上次采集：{{ lsNewsFmt(src.last_collect) }} · 缓存 {{ src.cache_count }} 条
+      <span v-if="src.last_error" style="color:var(--err)">· 错误：{{ src.last_error }}</span>
+    </p>
+
+    <!-- 关注分类多选 -->
+    <div class="ls-cat-grid">
+      <label v-for="c in src.categories" :key="c.id" class="ls-check">
+        <input type="checkbox" :checked="src.cfg.categories.includes(c.id)"
+               @change="lsNewsCatToggle(src, c.id)">
+        <span>{{ c.label }}</span>
+      </label>
+    </div>
+
+    <!-- 该源最近新闻 -->
+    <div v-if="ls.news.sourcePick === src.id && ls.news.items.length" class="ls-news-list">
+      <p class="muted" v-if="ls.news.itemsLoading">加载中…</p>
+      <div v-for="it in ls.news.items" :key="it.id" class="ls-news-item">
+        <div class="ls-news-title">[{{ it.category_label }}] {{ it.title }}</div>
+        <div class="ls-news-sum" v-if="it.summary">{{ it.summary }}</div>
+        <div class="ls-news-meta">
+          {{ lsNewsFmt(it.published) }}
+          <a :href="it.link" target="_blank" rel="noopener">原文 ↗</a>
+          <button class="ls-btn-xs" @click="lsNewsItemBody(src.id, it)">预览正文</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 推送规则区（有来源才显示） -->
+  <div v-if="ls.news.sources.length" class="ls-card">
+    <div class="ls-card-head">
+      <strong>新闻推送规则</strong>
+      <button class="ls-btn-xs ls-btn-primary" @click="lsNewsPushEditOpen(null)">+ 新建规则</button>
+    </div>
+    <p v-if="!ls.news.pushRules.length" class="muted">还没有推送规则。新建一条：选实例 / 群 / 时刻，机器人就会按时把新闻发到群里。</p>
+    <table v-else class="ls-table">
+      <thead>
+        <tr>
+          <th style="width:18%">来源</th>
+          <th style="width:22%">发送目标</th>
+          <th style="width:22%">排期</th>
+          <th style="width:8%">条数</th>
+          <th style="width:30%">操作</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr v-for="r in ls.news.pushRules" :key="r.id">
+          <td>{{ r.source_name }}</td>
+          <td>{{ r.instance_name || r.instance_qq }} → {{ r.target_name || r.target_id }}</td>
+          <td>
+            <span v-if="r.mode==='interval'">每 {{ r.interval_minutes }} 分</span>
+            <span v-else>{{ (r.times||[]).join(' / ') }}</span>
+            <span v-if="r.last_result" class="ls-hint">· {{ r.last_result }}</span>
+          </td>
+          <td>{{ r.count }}</td>
+          <td>
+            <button class="ls-btn-xs" :class="{'ls-btn-danger': ls.news.pushConfirm===r.id}"
+                    @click="lsNewsPushDelete(r)">{{ ls.news.pushConfirm===r.id ? '确认删除' : '删除' }}</button>
+            <button class="ls-btn-xs" @click="lsNewsPushToggle(r)">{{ r.enabled ? '停用' : '启用' }}</button>
+            <button class="ls-btn-xs" @click="lsNewsPushRun(r)">立即推送</button>
+            <button class="ls-btn-xs" @click="lsNewsPushEditOpen(r)">编辑</button>
+          </td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- ============ 浮层：新闻推送规则编辑 ============ -->
+<div class="modal" v-if="ls.news.pushForm" @click.self="lsNewsPushCancel()">
+  <div class="modal-box">
+    <h3>{{ ls.news.pushForm.id ? '编辑新闻推送规则' : '新建新闻推送规则' }}</h3>
+
+    <div class="row">
+      <label class="ls-field">
+        <span>新闻来源</span>
+        <select class="ls-input" v-model="ls.news.pushForm.source">
+          <option v-for="src in ls.news.sources" :key="src.id" :value="src.id">{{ src.name }}</option>
+        </select>
+      </label>
+    </div>
+
+    <div class="row">
+      <label class="ls-field">
+        <span>发送实例</span>
+        <select class="ls-input" v-model="ls.news.pushForm.instance_qq" @change="lsNewsPushPickInstance($event)">
+          <option value="">— 请选择 —</option>
+          <option v-for="i in ls.news.instances" :key="i.qq" :value="i.qq">
+            {{ i.name || i.qq }}（{{ i.protocol==='onebot' ? 'OneBot' : '官方机器人' }}）
+          </option>
+        </select>
+      </label>
+      <label class="ls-field">
+        <span>目标</span>
+        <select class="ls-input" v-model="ls.news.pushForm.target_id" @change="lsNewsPushPickGroup($event)">
+          <option value="">— 请选择 —</option>
+          <option v-for="g in lsNewsGroups()" :key="g.id" :value="g.id">{{ g.name }}</option>
+        </select>
+      </label>
+    </div>
+
+    <div class="row">
+      <label class="ls-switch">
+        <input type="radio" value="group" v-model="ls.news.pushForm.target_type"> 群
+      </label>
+      <label class="ls-switch" :class="{'ls-disabled': !lsNewsAllowPrivate()}">
+        <input type="radio" value="private" v-model="ls.news.pushForm.target_type"
+               :disabled="!lsNewsAllowPrivate()"> 私聊
+      </label>
+      <span v-if="!lsNewsAllowPrivate()" class="ls-hint">官方机器人拿不到用户 openid，私聊不可用</span>
+    </div>
+
+    <div class="row">
+      <label class="ls-field">
+        <span>发送模式</span>
+        <select class="ls-input" v-model="ls.news.pushForm.mode">
+          <option value="daily">每天固定时刻</option>
+          <option value="interval">每隔 N 分钟</option>
+        </select>
+      </label>
+      <label class="ls-field ls-field-sm" v-if="ls.news.pushForm.mode==='daily'">
+        <span>时刻(逗号分隔)</span>
+        <input class="ls-input" v-model="ls.news.pushForm.timesText" placeholder="08:00,20:00">
+      </label>
+      <label class="ls-field ls-field-sm" v-else>
+        <span>间隔(分)</span>
+        <input class="ls-input" type="number" min="30" max="1440" v-model.number="ls.news.pushForm.interval_minutes">
+      </label>
+      <label class="ls-field ls-field-sm">
+        <span>每次条数</span>
+        <input class="ls-input" type="number" min="1" max="20" v-model.number="ls.news.pushForm.count">
+      </label>
+      <label class="ls-switch">
+        <input type="checkbox" v-model="ls.news.pushForm.with_body">
+        <span>推送带正文（关则只发标题+链接）</span>
+      </label>
+    </div>
+
+    <div class="row">
+      <span class="ls-field-label">关注分类（不勾=该来源全部）：</span>
+      <div class="ls-cat-grid">
+        <label v-for="c in lsNewsPushCats()" :key="c.id" class="ls-check">
+          <input type="checkbox" :checked="ls.news.pushForm.categories.includes(c.id)"
+                 @change="lsNewsPushCatToggle(c.id)">
+          <span>{{ c.label }}</span>
+        </label>
+      </div>
+    </div>
+
+    <div class="actions">
+      <button @click="lsNewsPushCancel()">取消</button>
+      <button class="ls-btn-primary" @click="lsNewsPushSave()">保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ 浮层：新闻正文预览 ============ -->
+<div class="modal" v-if="ls.news.preview && ls.news.preview.open" @click.self="lsNewsItemBodyClose()">
+  <div class="modal-box">
+    <h3>{{ ls.news.preview.title }}</h3>
+    <p class="muted">
+      <a :href="ls.news.preview.link" target="_blank" rel="noopener">原文 ↗</a>
+      <span v-if="ls.news.preview.loading">· 正在抓取正文…</span>
+      <span v-else-if="ls.news.preview.err" style="color:var(--err)">· {{ ls.news.preview.err }}</span>
+      <span v-else-if="!ls.news.preview.body">· 该条为视频新闻或无文字正文</span>
+    </p>
+    <div class="ls-news-body" v-if="ls.news.preview.body && !ls.news.preview.loading">
+      {{ ls.news.preview.body }}
+    </div>
+    <div class="actions">
+      <button @click="lsNewsItemBodyClose()">关闭</button>
+    </div>
+  </div>
+</div>

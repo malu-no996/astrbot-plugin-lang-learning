@@ -1,0 +1,166 @@
+<!-- frag/commands.html —— 命令配置（当前语言的「全部命令」聚合成一张表，触发词就地改）
+     一份逻辑见 frag/commands.js（window.LsCommands）。
+     命令词分散在三处（推送规则 / 答题规则 / 语言级菜单配置），这一页把它们列到一起，
+     改完点保存 → 写回原处（后端 commands_routes.py）。
+     顶部还有一组**全局**的「命令格式」：前缀（默认空 = 不加） + 要不要 @机器人（默认要），
+     与当前语言无关，存 commands.json 的顶层键（`_prefix` / `_need_at`）。 -->
+<div v-show="ls.tab==='commands'">
+  <!-- 命令格式（全局，与语言无关）：前缀 + 要不要 @。默认「不加前缀 + 要 @」 -->
+  <div class="ls-cmd-format">
+    <label class="ls-field">
+      <span>命令前缀</span>
+      <input class="ls-input" maxlength="4" v-model="ls.cmd.form.prefix"
+             placeholder="（留空 = 不加前缀）">
+    </label>
+    <label class="ls-check">
+      <input type="checkbox" v-model="ls.cmd.form.need_at"> 需要 @ 机器人
+    </label>
+    <button class="ls-btn-xs" @click="lsCmdSaveFormat()">保存格式</button>
+    <span class="muted">当前发法：<code>{{ lsCmdSample() }}</code></span>
+  </div>
+
+  <p class="muted" style="margin:0 0 10px">
+    命令<strong>只在群里生效</strong>。这张表<strong>固定四行</strong>（菜单 / 单词 / 语法 / 答题，
+    任何语言都一样）—— 本语言还没建规则的行也在，触发词照样能先填（等规则建出来自动接上，
+    那时「发到哪」才能配）。
+    「触发词」列<strong>留空 = 用默认词</strong>（灰字就是当前默认），改完点那一行的「保存」
+    （只改命令词，不影响定时排期）。
+    「发到哪」是<strong>命令触发</strong>的投递目标：<strong>一条记录 = 一台机器人 + 它发到哪</strong>
+    （可加多条）。<strong>一条都不加 = 随发随地</strong>（收到命令的那台 + 发命令的那个群）；
+    只想换台机器人发 → 加一行选「任何群可用」
+    （与「定时推送发到哪」是两条线，后者见灰字）。
+    <strong>触发成功不会回执</strong> —— 内容直接发到群里；
+    只有失败（例：本群还有一道题没结束）才会回一句。
+  </p>
+
+  <!-- 答题命令的参数（2026-10-07 加）。只对「答题」这一行有效，写错的参数会当场报错、不静默忽略 -->
+  <p class="muted" style="margin:0 0 10px">
+    <strong>「答题」可以在命令后面带参数</strong>，临时改这一次的出题范围（不动规则本身），
+    以日语为例：<code>日语答题 level=1 type=语法 mode=宽松 window=3m</code>
+    —— <code>level</code> 等级（<code>1</code>=N1，可写 <code>1-3</code> 范围）；
+    <code>type</code> 题型（语法 / 听力 / 词汇 / 汉字 / 读解，多个用逗号）；
+    <code>mode</code> <strong>严谨</strong>（默认，抽不到就说没有）/ <strong>宽松</strong>（抽不到就逐级放宽到能出题）；
+    <code>window</code> 答题窗口（<code>3m</code> / <code>180</code>，裸数字按秒）。
+    参数都能省，键名也认中文（等级 / 题型 / 模式 / 时间）。
+  </p>
+
+  <div class="warn" v-if="ls.cmd.collisions.length">
+    这些词被多条命令共用：<strong>{{ ls.cmd.collisions.join('、') }}</strong>
+    —— 发一次它们会一起触发，建议换成不同的词。
+  </div>
+
+  <div class="ls-toolbar">
+    <span class="muted ls-grow">
+      固定四条命令：菜单 / 单词 / 语法 / 答题（任何语言都一样）
+    </span>
+    <button class="ls-btn-xs" @click="lsCmdLoad()">刷新</button>
+  </div>
+
+  <p class="muted" v-if="ls.cmd.loading">加载中…</p>
+
+  <table class="ls-table" v-else>
+    <thead>
+      <tr>
+        <th style="width:10%">类型</th>
+        <th style="width:22%">命令</th>
+        <th style="width:26%">触发词</th>
+        <th style="width:22%">发到哪</th>
+        <th style="width:20%">操作</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr v-for="it in ls.cmd.items" :key="it.slot">
+        <td>
+          <span class="badge online">{{ lsCmdKindLabel(it.kind) }}</span>
+          <div class="muted" v-if="!it.enabled">已停用</div>
+        </td>
+        <td>{{ it.label }}
+          <div class="muted">{{ it.desc }}</div>
+        </td>
+        <td>
+          <div class="ls-cmd-trigger">
+            <code v-if="ls.cmd.form.prefix">{{ ls.cmd.form.prefix }}</code>
+            <input class="ls-input" maxlength="24" v-model="it.trigger" :placeholder="it.default">
+          </div>
+          <div class="muted">{{ it.custom ? '已自定义 · 清空并保存可恢复默认' : '默认：' + it.default }}</div>
+        </td>
+        <td>
+          <span class="muted" v-if="!it.has_rule">（本语言还没建规则）</span>
+          <template v-else>
+            <span>{{ it.target_text }}</span>
+            <div v-if="it.kind!=='menu'">
+              <button class="ls-btn-xs" @click="lsCmdTargetsOpen(it)">配置</button>
+            </div>
+          </template>
+        </td>
+        <td>
+          <button class="ls-btn-xs" @click="lsCmdSave(it)">保存</button>
+        </td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<!-- 命令投递目标浮层（与上面的 v-show 容器同级，父隐藏时它才显示得出来）
+     每条记录 = 一台机器人 + 它发到哪（scope 三选一）；select 的 change 走 lsCmdTargetRowPick
+     而不是 v-model，是为了「换机器人时顺手清空已勾的群」这件事有个确定的执行顺序。 -->
+<div class="modal" v-if="ls.cmd.targets.item" @click.self="lsCmdTargetsClose()">
+  <div class="modal-box">
+    <h3>「{{ ls.cmd.targets.item.effective || ls.cmd.targets.item.label }}」发到哪</h3>
+    <p class="muted" style="margin:4px 0 10px">
+      一条记录 = 一台机器人 + 它发到哪（可加多条）：
+      <strong>任何群可用</strong> = 这台照常发到<strong>发命令的那个群</strong>
+      （只想换台机器人发就用它）；
+      <strong>选中的群可用</strong> = 这台<strong>总是</strong>发到下面勾的那些群
+      （跟命令在哪个群发无关；官方机器人的群就是它「群号映射」里的群）；
+      <strong>全部禁用</strong> = 这台不参与。<br>
+      <strong>一条都不加 = 随发随地</strong>：收到命令的那台 + 发命令的那个群。
+      这里只管「发命令」；<strong>定时推送</strong>仍发到
+      <code>{{ ls.cmd.targets.item.target_name }}</code>。
+    </p>
+
+    <div class="ls-cmd-trow" v-for="(row, i) in ls.cmd.targets.rows" :key="i">
+      <div class="ls-cmd-trow-head">
+        <span class="ls-cmd-trow-no">机器人{{ i + 1 }}</span>
+        <select class="ls-input" :value="row.qq"
+                @change="lsCmdTargetRowPick(row, $event.target.value)">
+          <option value="">（选一台机器人）</option>
+          <option v-for="x in lsCmdTargetRowOptions(row)" :key="x.qq" :value="String(x.qq)">
+            {{ lsCmdTargetRowLabel(x) }}
+          </option>
+        </select>
+        <button class="ls-btn-xs" @click="lsCmdTargetRemoveRow(i)">删除</button>
+      </div>
+      <div class="ls-cmd-trow-scope">
+        <label class="ls-check"><input type="radio" value="any" v-model="row.scope"> 任何群可用</label>
+        <label class="ls-check"><input type="radio" value="none" v-model="row.scope"> 全部禁用</label>
+        <label class="ls-check"><input type="radio" value="some" v-model="row.scope"> 选中的群可用</label>
+      </div>
+      <div class="ls-cmd-trow-groups" v-if="row.scope === 'some'">
+        <label class="ls-check" v-for="g in lsCmdTargetRowGroups(row)" :key="g.id">
+          <input type="checkbox" :value="String(g.id)" v-model="row.groupPicks">
+          {{ g.name || g.id }}
+        </label>
+        <p class="muted" v-if="!lsCmdTargetRowGroups(row).length">（这台机器人没有可选的群）</p>
+      </div>
+    </div>
+
+    <p class="muted" v-if="!ls.cmd.targets.rows.length" style="margin:8px 0">
+      （现在一条都没加 = 随发随地 —— 收到命令的那台机器人，发到发命令的那个群）
+    </p>
+
+    <div class="ls-toolbar" style="margin-top:8px">
+      <button class="ls-btn-xs" @click="lsCmdTargetAddRow()">+ 添加机器人</button>
+      <button class="ls-btn-xs" @click="lsCmdTargetsRefresh()">刷新机器人列表</button>
+      <span class="muted ls-grow" style="font-size:12px">
+        可选机器人 {{ ls.cmd.targets.bots.length }} 台（含官方机器人；
+        映射里有但此刻没连上的会标「未连接」）—— 每次打开本窗口都会自动重拉一次
+      </span>
+    </div>
+
+    <div class="actions">
+      <button @click="lsCmdTargetsClose()">取消</button>
+      <button @click="lsCmdTargetsSave()">保存</button>
+    </div>
+  </div>
+</div>

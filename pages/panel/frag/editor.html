@@ -1,0 +1,66 @@
+<!-- frag/editor.html —— 单词 / 语法的编辑浮层（为 partial.html 直接引用，不在任何
+     子页的 v-show 容器里，否则父元素 display:none 时 position:fixed 的浮层也看不见） -->
+<div class="modal" v-if="ls.editor.show" @click.self="lsEditorClose()">
+  <div class="modal-box">
+    <h3>{{ ls.editor.item.id ? '编辑' : '新增' }}{{ ls.editor.kind==='vocab' ? '单词' : '语法' }}</h3>
+
+    <label class="ls-field ls-field-wide">
+      <span>{{ ls.editor.kind==='vocab' ? '词条' : '句型' }}</span>
+      <input class="ls-input" v-model="ls.editor.item.term" placeholder="必填">
+    </label>
+
+    <div class="row">
+      <label class="ls-field">
+        <span>{{ ls.editor.kind==='vocab' ? '读音 / 假名 / 音标' : '结构 / 接续' }}</span>
+        <input class="ls-input" v-model="ls.editor.item.reading">
+      </label>
+      <label class="ls-field">
+        <span>等级</span>
+        <input class="ls-input" v-model="ls.editor.item.level" placeholder="N5 / N4 / TOPIK1 …">
+      </label>
+    </div>
+
+    <label class="ls-field ls-field-wide">
+      <span>{{ ls.editor.kind==='vocab' ? '释义（中文）' : '用法说明' }}</span>
+      <input class="ls-input" v-model="ls.editor.item.meaning">
+    </label>
+
+    <label class="ls-field ls-field-wide">
+      <span>例句</span>
+      <input class="ls-input" v-model="ls.editor.item.example">
+    </label>
+
+    <label class="ls-field ls-field-wide">
+      <span>例句翻译</span>
+      <input class="ls-input" v-model="ls.editor.item.example_trans">
+    </label>
+
+    <div class="row">
+      <label class="ls-field ls-field-wide">
+        <span>分组（留空 = 未分组；导入的文件默认按文件名分组）</span>
+        <input class="ls-input" v-model="ls.editor.item.group" list="ls-editor-groups"
+               placeholder="例：xxxN1单词">
+        <datalist id="ls-editor-groups">
+          <option v-for="g in lsEditorGroups()" :key="g" :value="g"></option>
+        </datalist>
+      </label>
+    </div>
+
+    <div class="row">
+      <label class="ls-field ls-field-wide">
+        <span>标签（逗号分隔，可用于推送过滤）</span>
+        <input class="ls-input" v-model="ls.editor.item.tags" placeholder="N5,动词,日常">
+      </label>
+    </div>
+
+    <label class="ls-field ls-field-wide">
+      <span>备注</span>
+      <textarea class="ls-input ls-textarea" v-model="ls.editor.item.note"></textarea>
+    </label>
+
+    <div class="actions">
+      <button @click="lsEditorClose()">取消</button>
+      <button @click="lsEditorSave()">保存</button>
+    </div>
+  </div>
+</div>

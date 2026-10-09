@@ -1,0 +1,157 @@
+<!-- frag/grammar.html —— 语法管理（结构与单词页一致，只是字段的语义不同：
+     term=句型标题 / reading=结构说明 / meaning=用法说明 / example=例句） -->
+<div v-show="ls.tab==='grammar'">
+  <div class="ls-toolbar">
+    <input class="ls-input ls-grow" v-model="ls.grammar.q" @keyup.enter="lsGrammarSearch()"
+           placeholder="搜句型 / 结构 / 用法 / 例句 / 标签 / 分组 …（回车或点搜索）">
+    <button @click="lsGrammarSearch()">搜索</button>
+    <select class="ls-input" v-model="ls.grammar.group" @change="lsGrammarSearch($event, 'group')">
+      <option value="">全部分组</option>
+      <option v-for="g in ls.grammar.groups" :key="g.group || '__none__'"
+              :value="g.group ? g.group : '__none__'">
+        {{ g.group || '未分组' }}（{{ g.count }}）
+      </option>
+    </select>
+    <select class="ls-input" v-model="ls.grammar.tag" @change="lsGrammarSearch($event, 'tag')">
+      <option value="">全部标签</option>
+      <option v-for="t in ls.grammar.tags" :key="t" :value="t">{{ t }}</option>
+    </select>
+    <select class="ls-input" v-model="ls.grammar.level" @change="lsGrammarSearch($event, 'level')">
+      <option value="">全部等级</option>
+      <option v-for="l in ls.grammar.levels" :key="l" :value="l">{{ l }}</option>
+    </select>
+    <select class="ls-input" v-model="ls.grammar.sort" @change="lsGrammarSearch($event, 'sort')">
+      <option value="updated">最近修改</option>
+      <option value="added">最近添加</option>
+      <option value="term">按句型</option>
+    </select>
+    <button @click="lsGrammarReset()">重置</button>
+  </div>
+
+  <div class="ls-toolbar">
+    <button @click="lsGrammarEditOpen(null)">+ 新增语法</button>
+    <button @click="lsGrammarChooseFile()">导入文件 / ZIP</button>
+    <input id="ls-grammar-file" type="file" accept=".zip,.apkg,.csv,.txt,.json" hidden
+           @change="lsGrammarPickFile($event)">
+    <button @click="lsGrammarExport('all')">导出全部（Anki 可用）</button>
+    <button @click="lsGrammarExport('query')">导出当前筛选</button>
+    <span class="muted">
+      共 {{ ls.grammar.total }} 条 · 第 {{ ls.grammar.page }}/{{ ls.grammar.pages }} 页
+    </span>
+  </div>
+
+  <!-- 分组操作：选中某个分组后才出现（导进来的整套语法点 = 一个分组） -->
+  <div class="ls-toolbar ls-groupbar" v-if="ls.grammar.group">
+    <span class="muted">已选分组：<b>{{ ls.grammar.group === '__none__' ? '未分组' : ls.grammar.group }}</b></span>
+    <input class="ls-input" v-model="ls.grammar.renameTo" placeholder="改成新的分组名"
+           @keyup.enter="lsGrammarRenameGroup()">
+    <button @click="lsGrammarRenameGroup()">重命名分组</button>
+    <button @click="lsGrammarDeleteGroup()" :class="{'ls-btn-danger': ls.grammar.delGroup}">
+      {{ ls.grammar.delGroup ? '点此确认删除整组' : '删除整组' }}
+    </button>
+  </div>
+
+  <div class="guide">
+    <p class="guide-title">语法条目怎么填</p>
+    <ul class="guide-list">
+      <li><b>句型</b>：语法点本身，如「～たことがある」「be used to doing」</li>
+      <li><b>结构</b>：接续形式 / 解释说明，对应 CSV 里的第二列</li>
+      <li><b>用法</b>：中文说明（导出到 Anki 时落在第三列 = 卡面背面）</li>
+      <li><b>标签 / 等级</b>：N5、N4、敬语、口语 …用来做推送筛选</li>
+      <li><b>分组</b>：一次导入的语法点自动归一组，名字默认取<b>文件名</b>，可在导入预览里改</li>
+    </ul>
+  </div>
+
+  <div class="local-box" v-if="ls.grammar.preview">
+    <div class="ls-preview-head">
+      <b>导入预览</b>
+      <span class="muted">{{ ls.grammar.preview.name }} · 解析出 {{ ls.grammar.preview.total }} 条</span>
+    </div>
+    <table class="ls-table">
+      <thead>
+        <tr><th>分组</th><th>句型</th><th>结构</th><th>用法</th><th>例句</th><th>标签</th><th>等级</th></tr>
+      </thead>
+      <tbody>
+        <tr v-for="(r, i) in ls.grammar.preview.sample" :key="i">
+          <td class="muted">{{ r.group || '未分组' }}</td>
+          <td>{{ r.term }}</td><td>{{ r.reading }}</td><td>{{ r.meaning }}</td>
+          <td>{{ r.example }}</td><td>{{ (r.tags||[]).join(' ') }}</td><td>{{ r.level }}</td>
+        </tr>
+      </tbody>
+    </table>
+    <p class="muted" v-if="ls.grammar.preview.total > ls.grammar.preview.sample.length">
+      仅显示前 {{ ls.grammar.preview.sample.length }} 条样例，导入时会写入全部 {{ ls.grammar.preview.total }} 条。
+    </p>
+    <p class="muted" v-if="(ls.grammar.preview.groups||[]).length > 1">
+      文件里认出 {{ ls.grammar.preview.groups.length }} 个分组：{{ ls.grammar.preview.groups.join(' / ') }}
+      —— 下面填一个名字可以把它们合并成一组，留空则各自保持原来的分组。
+    </p>
+    <label class="ls-field ls-field-wide">
+      <span>归到哪个分组（同名分组里的条目会被覆盖更新，别的分组不受影响）</span>
+      <input class="ls-input" v-model="ls.grammar.preview.group" placeholder="留空 = 未分组">
+    </label>
+    <div class="row">
+      <label class="ls-field">
+        <span>导入方式</span>
+        <select class="ls-input" v-model="ls.grammar.mode">
+          <option value="merge">合并去重（保留库里其它条目）</option>
+          <option value="group">覆盖同名分组（只换掉这一组）</option>
+          <option value="all">清空整库后写入</option>
+        </select>
+      </label>
+    </div>
+    <div class="actions">
+      <button @click="lsGrammarImportCancel()">取消</button>
+      <button @click="lsGrammarImport()" :disabled="ls.grammar.busy">确认导入</button>
+    </div>
+  </div>
+
+  <p v-if="ls.grammar.error" class="muted" style="color:var(--err)">{{ ls.grammar.error }}</p>
+  <p v-if="ls.grammar.loading" class="muted">加载中…</p>
+
+  <table class="ls-table" v-if="ls.grammar.list.length">
+    <thead>
+      <tr>
+        <th style="width:17%">句型</th>
+        <th style="width:10%">分组</th>
+        <th style="width:12%">结构</th>
+        <th style="width:20%">用法</th>
+        <th style="width:20%">例句</th>
+        <th style="width:7%">标签</th>
+        <th style="width:4%">等级</th>
+        <th style="width:10%">操作</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr v-for="(it, i) in ls.grammar.list" :key="it.id">
+        <td>{{ it.term }}</td>
+        <td class="muted">{{ it.group || '未分组' }}</td>
+        <td>{{ it.reading }}</td>
+        <td>{{ it.meaning }}</td>
+        <td>
+          <div class="ls-cell-clip">
+            {{ it.example }}
+            <span class="muted" v-if="it.example_trans">（{{ it.example_trans }}）</span>
+          </div>
+        </td>
+        <td>{{ (it.tags||[]).join(' ') }}</td>
+        <td>{{ it.level }}</td>
+        <td>
+          <button class="ls-btn-xs" @click="lsGrammarEditOpen(it)">编辑</button>
+          <button class="ls-btn-xs" @click="lsGrammarDelete(it)" :class="{'ls-btn-danger': ls.grammar.confirmId===it.id}">
+            {{ ls.grammar.confirmId===it.id ? '确认删除' : '删除' }}
+          </button>
+        </td>
+      </tr>
+    </tbody>
+  </table>
+  <p v-else-if="!ls.grammar.loading" class="muted">
+    还没有语法条目。可以手动新增，也可以把整理好的语法表（csv / zip / Anki 卡包）导进来。
+  </p>
+
+  <div class="ls-pager" v-if="ls.grammar.pages > 1">
+    <button @click="lsGrammarPage(-1)" :disabled="ls.grammar.page<=1">上一页</button>
+    <span class="muted">{{ ls.grammar.page }} / {{ ls.grammar.pages }}</span>
+    <button @click="lsGrammarPage(1)" :disabled="ls.grammar.page>=ls.grammar.pages">下一页</button>
+  </div>
+</div>

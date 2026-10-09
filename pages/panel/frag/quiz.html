@@ -1,0 +1,284 @@
+<!-- frag/quiz.html —— 答题推送（出题规则）
+
+     「题库」原先挂在本页的第三层小页签里，现独立成二级页签「题库管理」（见 frag/bank.html）。
+     两页**共用同一个 js**（frag/quiz.js / window.LsQuiz），因为它们是同一个后端模块
+     （quiz.py / quiz_routes.py），共用题型/分组/题库包这几份候选数据 —— 拆成两个 js 要来回同步。
+
+     注意：浮层（规则表单 / 当前题目）写在本文件里，但要放在**外层容器的 v-show 之外** ——
+     父元素 display:none 时 position:fixed 的浮层一样不出来。
+     所有函数在 module.js 里登记成 lsQuiz* 才能被模板用到。 -->
+<div v-show="ls.tab==='quiz'">
+  <p class="muted">
+    答题推送：定时抽一道<strong>{{ lsLangLabel() }}</strong>的选择题推到群里，大家作答（<code>A/B/C/D</code> 或 <code>1/2/3/4</code>；
+    <strong>QQ 官方机器人</strong>会连同四个选项一起给出 <code>A/B/C/D</code> 四个按钮，点一下即算作答），
+    到点自动公布答案、解析和名单。<span class="ls-hint">按语言区分 —— 上面的语言切到哪个，这一页就只显示哪种语言的规则；
+    题目来自「题库管理」页（同语言）。目前只有日语内置了 JLPT 题库（N5~N1），其它语言要自己去
+    题库页导入题目（导入时落成当前语言）。</span>
+  </p>
+
+  <div class="ls-toolbar">
+    <button @click="lsQuizEditOpen(null)">+ 新增出题规则</button>
+    <button @click="lsQuizLoad()">刷新</button>
+    <span class="muted">共 {{ ls.quiz.rules.length }} 条规则</span>
+  </div>
+
+  <p v-if="ls.quiz.loading" class="muted">加载中…</p>
+  <p v-else-if="!ls.quiz.rules.length" class="muted">
+    还没有出题规则。点「+ 新增出题规则」：挑实例 → 挑群 → 选等级范围和题型 →
+    定时间与答题时长，到点就会自动往群里发题。
+  </p>
+
+  <table class="ls-table" v-else>
+    <thead>
+      <tr>
+        <th style="width:8%">状态</th>
+        <th style="width:16%">抽题范围</th>
+        <th style="width:13%">实例</th>
+        <th style="width:14%">目标</th>
+        <th style="width:19%">时间</th>
+        <th style="width:10%">窗口 / 作答</th>
+        <th style="width:20%">操作</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr v-for="r in ls.quiz.rules" :key="r.id">
+        <td>
+          <span class="badge" :class="r.enabled ? 'online' : 'offline'">
+            {{ r.enabled ? '启用' : '停用' }}
+          </span>
+        </td>
+        <td>
+          {{ lsQuizLevelRange(r) }}
+          <div class="muted">{{ r.types_label }}</div>
+          <div class="muted">分组：{{ r.groups_label }}</div>
+          <div class="muted">命令：/<code>{{ r.trigger || lsQuizDefaultTrigger() }}</code></div>
+        </td>
+        <td>{{ r.instance_name || r.instance_qq }}</td>
+        <td>{{ lsQuizTargetName(r) }}</td>
+        <td>
+          <span v-if="r.mode==='daily'">
+            每天 {{ r.times.join(' / ') }} ±{{ r.jitter_minutes }}分
+          </span>
+          <span v-else>每 {{ r.interval_minutes }} 分钟 ±{{ r.jitter_minutes }}分</span>
+          <div class="muted">
+            下次：{{ lsTimeFmt(r.next_run_at) }}
+            <span v-if="r.last_run_at"> · 上次：{{ lsTimeFmt(r.last_run_at) }}</span>
+          </div>
+        </td>
+        <td>
+          {{ Math.round(r.window_seconds / 60) }} 分
+          <div class="muted">{{ r.answer_mode_label }}模式</div>
+        </td>
+        <td>
+          <button class="ls-btn-xs" @click="lsQuizRun(r)">立即出题</button>
+          <button class="ls-btn-xs" @click="lsQuizSessionOpen(r)">当前题</button>
+          <button class="ls-btn-xs" @click="lsQuizEditOpen(r)">编辑</button>
+          <button class="ls-btn-xs" @click="lsQuizToggle(r)">{{ r.enabled ? '停用' : '启用' }}</button>
+          <button class="ls-btn-xs" :class="{'ls-btn-danger': r._confirm}" @click="lsQuizDelete(r)">
+            {{ r._confirm ? '确认删除' : '删除' }}
+          </button>
+        </td>
+      </tr>
+    </tbody>
+  </table>
+
+  <p class="muted" v-if="ls.quiz.rules.length">
+    「立即出题」会真的在群里开一个答题会话（群友可以马上作答）；想看看这次抽了什么、有多少人作答，
+    用同一行的「当前题」。<span class="ls-hint">最后一次执行的结果写在 <code>last_result</code> 里，
+    常用于排查「实例没连上 / 群号映射查不到 / 范围内没题」。</span>
+  </p>
+</div>
+
+<!-- ============ 浮层：当前正在作答的题目 ============ -->
+<div class="modal" v-if="ls.quiz.sessionShow" @click.self="lsQuizSessionClose()">
+  <div class="modal-box">
+    <h3>当前题目</h3>
+    <template v-if="ls.quiz.session">
+      <div class="ls-preview-head">
+        <strong>{{ ls.quiz.session.question.level }} {{ ls.quiz.session.question.type_label || ls.quiz.session.question.type }}</strong>
+        <span class="muted">
+          开题 {{ lsTimeFmt(ls.quiz.session.started_at) }} · 剩余
+          {{ Math.max(0, ls.quiz.session.ends_at - ls.quiz.session.now) }} 秒
+        </span>
+      </div>
+      <pre class="ls-preview-text">Q： {{ ls.quiz.session.question.question }}
+<template v-for="(o,i) in ls.quiz.session.question.options" :key="i">
+{{ String.fromCharCode(65+i) }}. {{ o }}</template></pre>
+      <p class="muted">已有 {{ ls.quiz.session.answer_count }} 人作答。到点会自动公布答案、解析和名单。</p>
+    </template>
+    <p v-else class="muted">
+      这条规则当前没有进行中的答题会话 —— 可能还没到出题时间，或者窗口已经结束。
+    </p>
+    <div class="actions">
+      <button @click="lsQuizSessionClose()">关闭</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ 浮层：规则编辑 ============ -->
+<div class="modal" v-if="ls.quiz.form" @click.self="lsQuizCancel()">
+  <div class="modal-box">
+    <h3>{{ ls.quiz.form.id ? '编辑出题规则' : '新增出题规则' }}</h3>
+
+    <div class="row">
+      <label class="ls-field ls-field-wide">
+        <span>规则名（可选，方便自己认）</span>
+        <input class="ls-input" v-model="ls.quiz.form.name" placeholder="例：N3语法夜练">
+      </label>
+    </div>
+
+    <div class="row">
+      <label class="ls-field ls-field-wide">
+        <span>命令触发词（在群里发 <code>/词</code> 就立刻出一道题；留空 = 用默认）</span>
+        <input class="ls-input" maxlength="24" v-model="ls.quiz.form.trigger" :placeholder="lsQuizDefaultTrigger()">
+        <span class="ls-hint">
+          命令默认要 <strong>@ 一下机器人</strong>（前缀在「命令配置」页配，默认不加）；
+          <strong>在哪个群发命令就给哪个群出题</strong>（随发随地），要固定发到别的群去「命令配置 → 发到哪」配。
+          群里任何人都能触发。本群已经有一道题没答完时会提示、不重复开。
+        </span>
+      </label>
+    </div>
+
+    <div class="row">
+      <label class="ls-field ls-field-wide">
+        <span>用哪个实例发送</span>
+        <select class="ls-input" v-model="ls.quiz.form.instance_qq" @change="lsQuizPickInstance($event)">
+          <option value="">— 请选择 —</option>
+          <option v-for="i in ls.quiz.instances" :key="i.qq" :value="i.qq">
+            {{ i.name || i.qq }}（{{ i.protocol==='onebot' ? 'OneBot' : '官方机器人' }}）
+          </option>
+        </select>
+      </label>
+    </div>
+
+    <div class="row">
+      <label class="ls-field ls-field-wide">
+        <span>目标群</span>
+        <select class="ls-input" v-model="ls.quiz.picks.group" @change="lsQuizPickGroup($event)">
+          <option value="">— 请选择 —</option>
+          <option v-for="g in lsQuizGroups()" :key="g.id" :value="g.id">{{ g.name }}</option>
+        </select>
+      </label>
+    </div>
+
+    <div class="row">
+      <label class="ls-field">
+        <span>最低等级</span>
+        <select class="ls-input" v-model="ls.quiz.form.level_min">
+          <option value="">不限</option>
+          <option v-for="l in ls.quiz.levels" :key="l" :value="l">{{ l }}</option>
+        </select>
+      </label>
+      <label class="ls-field">
+        <span>最高等级</span>
+        <select class="ls-input" v-model="ls.quiz.form.level_max">
+          <option value="">不限</option>
+          <option v-for="l in ls.quiz.levels" :key="l" :value="l">{{ l }}</option>
+        </select>
+      </label>
+      <label class="ls-field">
+        <span>答题窗口（秒）</span>
+        <input class="ls-input" type="number" min="30" max="3600" v-model.number="ls.quiz.form.window_seconds">
+      </label>
+      <label class="ls-field">
+        <span>窗口（分钟）</span>
+        <input class="ls-input" :value="(ls.quiz.form.window_seconds/60).toFixed(1)" disabled>
+      </label>
+    </div>
+
+    <div class="row">
+      <label class="ls-field">
+        <span>作答模式</span>
+        <select class="ls-input" v-model="ls.quiz.form.answer_mode">
+          <option value="strict">严格（一人一票 · 先到先得）</option>
+          <option value="loose">宽松（可改答案 · 以最后一次为准）</option>
+        </select>
+      </label>
+      <p class="muted" style="margin:0;align-self:center">
+        严格：第一个答案就是最终答案，之后再答（哪怕答对）也不作数。<br>
+        宽松：允许改答案，出榜按最后一次算 —— 手滑打错能救回来。
+      </p>
+    </div>
+    <p class="muted" v-if="!ls.quiz.levels.length">
+      当前语言（{{ lsLangLabel() }}）还没有题库，等级只能选「不限」——
+      去「题库管理」页导入题目后这边才会有具体等级可选。
+    </p>
+
+    <div class="row">
+      <label class="ls-field ls-field-wide">
+        <span>题型（一个都不勾 = 全部）</span>
+        <div class="ls-times">
+          <label class="ls-check" v-for="t in ls.quiz.types" :key="t.key">
+            <input type="checkbox" v-model="ls.quiz.form.types" :value="t.key"> {{ t.label }}
+          </label>
+        </div>
+      </label>
+    </div>
+
+    <div class="row">
+      <label class="ls-field ls-field-wide">
+        <span>题库分组（一个都不勾 = 全部分组）</span>
+        <div class="ls-times">
+          <label class="ls-check" v-for="g in ls.quiz.groups" :key="g">
+            <input type="checkbox" v-model="ls.quiz.form.groups" :value="g"> {{ g }}
+          </label>
+          <span v-if="!ls.quiz.groups.length" class="muted">（题库里还没有分组）</span>
+        </div>
+      </label>
+    </div>
+
+    <div class="row">
+      <label class="ls-field">
+        <span>定时方式</span>
+        <select class="ls-input" v-model="ls.quiz.form.mode">
+          <option value="daily">每天固定时刻</option>
+          <option value="interval">每隔 N 分钟</option>
+        </select>
+      </label>
+      <label class="ls-field" v-if="ls.quiz.form.mode==='interval'">
+        <span>间隔（分钟，≥30）</span>
+        <input class="ls-input" type="number" min="30" max="1440" v-model.number="ls.quiz.form.interval_minutes">
+      </label>
+      <label class="ls-field">
+        <span>随机浮动（分钟）</span>
+        <input class="ls-input" type="number" min="0" max="120" v-model.number="ls.quiz.form.jitter_minutes">
+      </label>
+    </div>
+
+    <div class="row" v-if="ls.quiz.form.mode==='daily'">
+      <label class="ls-field ls-field-wide">
+        <span>出题时刻（一天可多个）</span>
+        <div class="ls-times">
+          <span class="badge" v-for="t in ls.quiz.form.times" :key="t" @click="lsQuizTimeDel(t)">
+            {{ t }} ✕
+          </span>
+          <input class="ls-input ls-time-input" v-model="ls.quiz.newTime" placeholder="20:30"
+                 @keyup.enter="lsQuizTimeAdd(ls.quiz.newTime); ls.quiz.newTime=''">
+          <button type="button" @click="lsQuizTimeAdd(ls.quiz.newTime); ls.quiz.newTime=''">添加</button>
+        </div>
+      </label>
+    </div>
+
+    <p class="muted">结束后公布：</p>
+    <label class="ls-check">
+      <input type="checkbox" v-model="ls.quiz.form.output_correct"> 答对名单（默认开）
+    </label>
+    <label class="ls-check">
+      <input type="checkbox" v-model="ls.quiz.form.output_wrong"> 答错名单
+    </label>
+    <label class="ls-check">
+      <input type="checkbox" v-model="ls.quiz.form.show_explanation"> 答案解析
+    </label>
+
+    <hr>
+
+    <label class="ls-check">
+      <input type="checkbox" v-model="ls.quiz.form.enabled"> 启用这条规则
+    </label>
+
+    <div class="actions">
+      <button @click="lsQuizCancel()">取消</button>
+      <button @click="lsQuizSave()">保存</button>
+    </div>
+  </div>
+</div>

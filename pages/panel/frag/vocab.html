@@ -1,0 +1,171 @@
+<!-- frag/vocab.html —— 单词管理（增删改查 + 搜索过滤 + Anki/ZIP 导入导出）
+     与 grammar.html 结构一致，只有文案与绑定的 key 不同（ls.vocab / lsGrammar*）。 -->
+<div v-show="ls.tab==='vocab'">
+  <div class="ls-toolbar">
+    <input class="ls-input ls-grow" v-model="ls.vocab.q" @keyup.enter="lsVocabSearch()"
+           placeholder="搜单词 / 读音 / 释义 / 例句 / 标签 / 分组 …（回车或点搜索）">
+    <button @click="lsVocabSearch()">搜索</button>
+    <select class="ls-input" v-model="ls.vocab.group" @change="lsVocabSearch($event, 'group')">
+      <option value="">全部分组</option>
+      <option v-for="g in ls.vocab.groups" :key="g.group || '__none__'"
+              :value="g.group ? g.group : '__none__'">
+        {{ g.group || '未分组' }}（{{ g.count }}）
+      </option>
+    </select>
+    <select class="ls-input" v-model="ls.vocab.tag" @change="lsVocabSearch($event, 'tag')">
+      <option value="">全部标签</option>
+      <option v-for="t in ls.vocab.tags" :key="t" :value="t">{{ t }}</option>
+    </select>
+    <select class="ls-input" v-model="ls.vocab.level" @change="lsVocabSearch($event, 'level')">
+      <option value="">全部等级</option>
+      <option v-for="l in ls.vocab.levels" :key="l" :value="l">{{ l }}</option>
+    </select>
+    <select class="ls-input" v-model="ls.vocab.sort" @change="lsVocabSearch($event, 'sort')">
+      <option value="updated">最近修改</option>
+      <option value="added">最近添加</option>
+      <option value="term">按字词</option>
+    </select>
+    <button @click="lsVocabReset()">重置</button>
+  </div>
+
+  <div class="ls-toolbar">
+    <button @click="lsVocabEditOpen(null)">+ 新增单词</button>
+    <button @click="lsVocabChooseFile()">导入文件 / ZIP</button>
+    <input :id="'ls-vocab-file'" type="file" accept=".zip,.apkg,.csv,.txt,.json" hidden
+           @change="lsVocabPickFile($event)">
+    <button @click="lsVocabExport('all')">导出全部（Anki 可用）</button>
+    <button @click="lsVocabExport('query')">导出当前筛选</button>
+    <span class="muted">
+      共 {{ ls.vocab.total }} 条 · 第 {{ ls.vocab.page }}/{{ ls.vocab.pages }} 页
+    </span>
+  </div>
+
+  <!-- 分组操作：选中某个分组后才出现（一次导入 = 一个分组，改名/删组都在这里） -->
+  <div class="ls-toolbar ls-groupbar" v-if="ls.vocab.group">
+    <span class="muted">已选分组：<b>{{ ls.vocab.group === '__none__' ? '未分组' : ls.vocab.group }}</b></span>
+    <input class="ls-input" v-model="ls.vocab.renameTo" placeholder="改成新的分组名"
+           @keyup.enter="lsVocabRenameGroup()">
+    <button @click="lsVocabRenameGroup()">重命名分组</button>
+    <button @click="lsVocabDeleteGroup()" :class="{'ls-btn-danger': ls.vocab.delGroup}">
+      {{ ls.vocab.delGroup ? '点此确认删除整组' : '删除整组' }}
+    </button>
+  </div>
+
+  <div class="guide">
+    <p class="guide-title">支持哪些文件</p>
+    <ul class="guide-list">
+      <li><b>.apkg</b> —— Anki 卡包（自动读里面的 SQLite 笔记表）</li>
+      <li><b>.zip</b> —— 包里可以有 csv / txt / json / 甚至多个 .apkg</li>
+      <li><b>.csv / .txt</b> —— 制表符或逗号分隔，有表头就按表头映射（中英文列名都认）</li>
+      <li><b>.json</b> —— <code>{"items":[{...}]}</code> 或数组</li>
+    </ul>
+    <p class="guide-note">
+      导出是<b>制表符分隔</b>的文本：term / reading / meaning / example / example_trans / tags / level / group，
+      Anki 的「文件导入」选它就完事，<b>再导回来也会回到原来的分组</b>。
+    </p>
+    <p class="guide-note">
+      <b>分组</b>：每次导入的条目会自动归到一个分组，名字默认取<b>文件名</b>
+      （<code>xxxN1单词.apkg</code> → 分组「xxxN1单词」；一个 zip 里多份词表时各自用自己的文件名），
+      也可以在下面的预览框里改。分组能用来筛选、整组改名 / 删除，也能让 QQ 推送「只从某几个分组抽词」。
+    </p>
+  </div>
+
+  <!-- 导入预览：先看识别成啥样，确认后才真正写库（导错了没法撤销） -->
+  <div class="local-box" v-if="ls.vocab.preview">
+    <div class="ls-preview-head">
+      <b>导入预览</b>
+      <span class="muted">{{ ls.vocab.preview.name }} · 解析出 {{ ls.vocab.preview.total }} 条</span>
+    </div>
+    <table class="ls-table">
+      <thead>
+        <tr><th>分组</th><th>词条</th><th>读音</th><th>释义</th><th>例句</th><th>标签</th><th>等级</th></tr>
+      </thead>
+      <tbody>
+        <tr v-for="(r, i) in ls.vocab.preview.sample" :key="i">
+          <td class="muted">{{ r.group || '未分组' }}</td>
+          <td>{{ r.term }}</td><td>{{ r.reading }}</td><td>{{ r.meaning }}</td>
+          <td>{{ r.example }}</td><td>{{ (r.tags||[]).join(' ') }}</td><td>{{ r.level }}</td>
+        </tr>
+      </tbody>
+    </table>
+    <p class="muted" v-if="ls.vocab.preview.total > ls.vocab.preview.sample.length">
+      仅显示前 {{ ls.vocab.preview.sample.length }} 条样例，导入时会写入全部 {{ ls.vocab.preview.total }} 条。
+    </p>
+    <p class="muted" v-if="(ls.vocab.preview.groups||[]).length > 1">
+      文件里认出 {{ ls.vocab.preview.groups.length }} 个分组：{{ ls.vocab.preview.groups.join(' / ') }}
+      —— 下面填一个名字可以把它们合并成一组，留空则各自保持原来的分组。
+    </p>
+    <label class="ls-field ls-field-wide">
+      <span>归到哪个分组（同名分组里的词会被覆盖更新，别的分组不受影响）</span>
+      <input class="ls-input" v-model="ls.vocab.preview.group" placeholder="留空 = 未分组">
+    </label>
+    <div class="row">
+      <label class="ls-field">
+        <span>导入方式</span>
+        <select class="ls-input" v-model="ls.vocab.mode">
+          <option value="merge">合并去重（保留库里其它条目）</option>
+          <option value="group">覆盖同名分组（只换掉这一组）</option>
+          <option value="all">清空整库后写入</option>
+        </select>
+      </label>
+    </div>
+    <p class="muted">
+      <b>merge</b>：同分组同词条的更新、其它照旧；
+      <b>group</b>：先把这个分组清干净再写（词表改版时用）；
+      <b>all</b>：连其它分组一起清掉，整个库只剩这批。
+    </p>
+    <div class="actions">
+      <button @click="lsVocabImportCancel()">取消</button>
+      <button @click="lsVocabImport()" :disabled="ls.vocab.busy">确认导入</button>
+    </div>
+  </div>
+
+  <p v-if="ls.vocab.error" class="muted" style="color:var(--err)">{{ ls.vocab.error }}</p>
+  <p v-if="ls.vocab.loading" class="muted">加载中…</p>
+
+  <table class="ls-table" v-if="ls.vocab.list.length">
+    <thead>
+      <tr>
+        <th style="width:14%">词条</th>
+        <th style="width:10%">分组</th>
+        <th style="width:11%">读音</th>
+        <th style="width:18%">释义</th>
+        <th style="width:20%">例句</th>
+        <th style="width:8%">标签</th>
+        <th style="width:5%">等级</th>
+        <th style="width:14%">操作</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr v-for="(it, i) in ls.vocab.list" :key="it.id">
+        <td>{{ it.term }}</td>
+        <td class="muted">{{ it.group || '未分组' }}</td>
+        <td>{{ it.reading }}</td>
+        <td>{{ it.meaning }}</td>
+        <td>
+          <div class="ls-cell-clip">
+            {{ it.example }}
+            <span class="muted" v-if="it.example_trans">（{{ it.example_trans }}）</span>
+          </div>
+        </td>
+        <td>{{ (it.tags||[]).join(' ') }}</td>
+        <td>{{ it.level }}</td>
+        <td>
+          <button class="ls-btn-xs" @click="lsVocabEditOpen(it)">编辑</button>
+          <button class="ls-btn-xs" @click="lsVocabDelete(it)" :class="{'ls-btn-danger': ls.vocab.confirmId===it.id}">
+            {{ ls.vocab.confirmId===it.id ? '确认删除' : '删除' }}
+          </button>
+        </td>
+      </tr>
+    </tbody>
+  </table>
+  <p v-else-if="!ls.vocab.loading" class="muted">
+    还没有单词。点上面的「新增单词」手动加，或用「导入文件 / ZIP」把现有的词表 / Anki 卡包一次性灌进来。
+  </p>
+
+  <div class="ls-pager" v-if="ls.vocab.pages > 1">
+    <button @click="lsVocabPage(-1)" :disabled="ls.vocab.page<=1">上一页</button>
+    <span class="muted">{{ ls.vocab.page }} / {{ ls.vocab.pages }}</span>
+    <button @click="lsVocabPage(1)" :disabled="ls.vocab.page>=ls.vocab.pages">下一页</button>
+  </div>
+</div>
