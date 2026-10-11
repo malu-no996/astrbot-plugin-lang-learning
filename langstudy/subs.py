@@ -439,8 +439,12 @@ async def _tick_subs() -> None:
             continue
         interval = int(sub.get("interval_minutes") or DEFAULT_INTERVAL) * 60
         last = sub.get("last_sent") or {}
+        # ⚠️ 答题（*_quiz）**不由订阅循环出题**：它的调度统一归「答题规则」的定时
+        # （见 quiz.session.dispatch_rule），那里会按订阅群逐个分发（哪个群订阅就发哪，
+        # 支持多群）。两边都出的话，同一群会被两条调度各出一题、节奏也打架。
         due = [k for k in (sub.get("services") or [])
-               if now - int(last.get(k) or 0) >= interval]
+               if not str(k).endswith("_quiz")
+               and now - int(last.get(k) or 0) >= interval]
         if not due:
             continue
         for key in due[:5]:                      # 每个订阅每轮最多推 5 项，避免突发

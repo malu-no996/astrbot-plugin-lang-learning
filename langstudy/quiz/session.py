@@ -230,6 +230,65 @@ async def _fill_official_names(session: dict) -> None:
 # ---------------- 出题 ----------------
 
 
+def subscribed_groups(lang: str) -> list[tuple[str, str]]:
+    """订阅了该语言答题的启用中订阅群 → `[(平台实例id, 群id), ...]`（去重）。
+
+    ★ **「哪个群订阅的就发哪」**：出题目标一律以**订阅**为准，不读规则里那份配置值
+    （规则里的 `instance_qq` / `target_id` 可能是从 nonebot 版迁移来的真实 QQ 号 /
+    真实群号，AstrBot 运行时用的是「平台实例 id + 会话 id」，两者对不上 → 发到不存在的
+    实例上静默失败）。一条规则可以被**多个群**订阅，所以这里返回的是一个列表：
+    每条订阅各出一题、各出一榜。
+    """
+    lang = str(lang or "").strip()
+    if not lang:
+        return []
+    try:
+        from .. import subs as subs_mod
+        subs = subs_mod.load_subs()
+    except Exception as exc:  # noqa: BLE001 —— 读订阅失败就当没订阅，别把出题循环搞崩
+        logger.warning(f"答题：读取订阅失败（已忽略）：{exc}")
+        return []
+    svc = f"{lang}_quiz"
+    out: list[tuple[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for sub in subs:
+        if not sub.get("enabled"):
+            continue
+        if svc not in (sub.get("services") or []):
+            continue
+        pid = str(sub.get("platform_id") or "").strip()
+        gid = str(sub.get("group_id") or "").strip()
+        if not pid or not gid or (pid, gid) in seen:
+            continue
+        seen.add((pid, gid))
+        out.append((pid, gid))
+    return out
+
+
+def _target_rule(rule: dict, pid: str, gid: str) -> dict:
+    """复制一份规则、把发送目标换成某个**订阅群**的运行时值。"""
+    return {**rule, "instance_qq": str(pid).strip(), "target_id": str(gid).strip(),
+            "target_type": "group"}
+
+
+async def dispatch_rule(rule: dict) -> None:
+    """规则到点：给**所有订阅了该语言答题**的群各出一题（哪个群订阅就发哪）。
+
+    没有任何群订阅该语言答题就跳过（并重排下次时间），不再退回规则里那份旧目标。
+    """
+    rid = str(rule.get("id") or "")
+    lang = str(rule.get("lang") or "")
+    targets = subscribed_groups(lang)
+    if not targets:
+        now = time.time()
+        set_quiz_rule_field(rid, last_result=f"没有群订阅{base.lang_label(lang)}答题，跳过",
+                            last_run_at=int(now))
+        _reschedule(rule, now)
+        return
+    for pid, gid in targets:
+        await open_session(_target_rule(rule, pid, gid))
+
+
 async def open_session(rule: dict, reply_msg_id: str | None = None) -> dict:
     """抽一道题、发出去、开一个答题会话。返回结果 dict（含是否成功）。"""
     rid = str(rule.get("id"))
@@ -452,7 +511,9 @@ async def loop_forever() -> None:
                     continue
                 if now >= nxt:
                     try:
-                        await open_session(rule)
+                        # 目标按**订阅群**分发（哪个群订阅就发哪，支持多群），
+                        # 而不是用规则里那份可能过期的配置目标。
+                        await dispatch_rule(rule)
                     except Exception as exc:  # noqa: BLE001
                         logger.warning(f"答题：出题异常：{exc}")
             await _close_expired()
@@ -474,8 +535,24 @@ def start() -> asyncio.Task:
 
 
 async def run_quiz_rule(rule_id: str) -> dict:
-    """页面「立即出题」按钮：不管排期，立刻发一道并开会话。"""
+    """页面「立即出题」按钮：不管排期，立刻给**所有订阅该语言答题的群**各发一道。"""
     rule = get_quiz_rule(rule_id)
     if rule is None:
         return {"ok": False, "message": "规则不存在"}
-    return await open_session(rule)
+    lang = str(rule.get("lang") or "")
+    targets = subscribed_groups(lang)
+    if not targets:
+        return {"ok": False,
+                "message": f"没有群订阅{base.lang_label(lang)}答题 —— "
+                           f"请先让目标群在「订阅」页订阅该语言答题"}
+    sent, first_q, msgs = 0, None, []
+    for pid, gid in targets:
+        res = await open_session(_target_rule(rule, pid, gid))
+        if res.get("ok"):
+            sent += 1
+            first_q = first_q or res.get("question")
+        elif res.get("message"):
+            msgs.append(str(res["message"]))
+    if not sent:
+        return {"ok": False, "message": "；".join(msgs) or "出题失败"}
+    return {"ok": True, "message": f"已向 {sent} 个订阅群出题", "question": first_q}
