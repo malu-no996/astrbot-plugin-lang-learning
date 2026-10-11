@@ -29,6 +29,8 @@ window.LsNews = {
       pushConfirm: '',
       pushRunMsg: '',
       msg: '',
+      newsSubs: [],              // 订阅了本语言新闻的群（新闻推送规则区，仅新闻、可编辑推送参数）
+      newsSubsBusy: false,
       preview: { open: false, loading: false, title: '', body: '', link: '', err: '' },
     };
   },
@@ -65,7 +67,7 @@ window.LsNews = {
     // ---------------- 加载 ----------------
     async function onEnter() {
       s.lang = ls.lang;
-      await Promise.all([newsLoad(), newsPushRulesLoad()]);
+      await Promise.all([newsLoad(), newsPushRulesLoad(), newsSubsLoad()]);
     }
 
     async function newsLoad() {
@@ -80,6 +82,31 @@ window.LsNews = {
       const j = await hooks.lsGet('/news/push/rules', { lang: ls.lang });
       if (!j.ok) { ctx.notice(j.message || '推送规则加载失败', 'err'); return; }
       s.pushRules = j.rules || [];
+    }
+
+    // 订阅了本语言新闻的群（在「新闻推送规则」区并排展示，仅新闻、可编辑推送参数）
+    async function newsSubsLoad() {
+      s.newsSubsBusy = true;
+      try {
+        const j = await hooks.lsGet('/subs/news', { lang: ls.lang });
+        if (!j.ok) { ctx.notice(j.message || '订阅数据加载失败', 'err'); s.newsSubs = []; return; }
+        s.newsSubs = j.subs || [];
+      } finally {
+        s.newsSubsBusy = false;
+      }
+    }
+
+    async function newsSubsSave(sub) {
+      const body = {
+        group_id: sub.group_id,
+        interval_minutes: Number(sub.interval_minutes) || 120,
+        news_count: Number(sub.news_count) || 5,
+        enabled: !!sub.enabled,
+      };
+      const j = await hooks.lsPostJson('/subs/save', body);
+      if (!j.ok) { ctx.notice(j.message || '保存失败', 'err'); return; }
+      ctx.notice('已保存新闻订阅推送参数', 'ok');
+      await newsSubsLoad();
     }
 
     // ---------------- 来源：配置 / 采集 / 查看 ----------------
@@ -262,6 +289,8 @@ window.LsNews = {
       onEnter,
       newsLoad,
       newsPushRulesLoad,
+      newsSubsLoad,
+      newsSubsSave,
       newsCatToggle,
       newsSourceCfgSave,
       newsCollect,

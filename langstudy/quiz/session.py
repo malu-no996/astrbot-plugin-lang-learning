@@ -162,7 +162,7 @@ async def close_session(rid: str) -> None:
             text = render.result_text(q, correct, wrong, rule)
             try:
                 await sender.send_text(pid, rule.get("target_type"), tid, text,
-                                       reply_msg_id=rule.get("reply_msg_id"))
+                                      reply_msg_id=s.get("reply_msg_id") or None)
             except Exception as exc:  # noqa: BLE001
                 logger.warning(f"答题：结果发送失败：{exc}")
         summary = f"答完：对 {len(correct)} / 错 {len(wrong)}（共 {len(s.get('answers', {}))} 人作答）"
@@ -222,7 +222,7 @@ async def open_session(rule: dict, reply_msg_id: str | None = None) -> dict:
 
 
 async def _open_session_locked(rule: dict, rid: str, now: float, pid: str, tkey: str,
-                                reply_msg_id: str | None = None) -> dict:
+                              reply_msg_id: str | None = None) -> dict:
     """真正开题（进来前已确认本群没有进行中的题，且已占位）。"""
     prev = find_open_session(pid, [tkey])
     if prev is not None:
@@ -257,8 +257,8 @@ async def _open_session_locked(rule: dict, rid: str, now: float, pid: str, tkey:
                                   reply_msg_id=reply_msg_id):
             text = render.drop_audio_line(text)
     try:
-        await sender.send_text(pid, rule.get("target_type"), str(rule.get("target_id") or ""), text, keyboard=kb,
-                               reply_msg_id=reply_msg_id)
+        await sender.send_text(pid, rule.get("target_type"), str(rule.get("target_id") or ""), text,
+                              keyboard=kb, reply_msg_id=reply_msg_id)
     except Exception as exc:  # noqa: BLE001
         msg = f"发送题目失败：{exc}"
         logger.warning(f"答题：{msg}")
@@ -272,6 +272,7 @@ async def _open_session_locked(rule: dict, rid: str, now: float, pid: str, tkey:
         "target_type": rule.get("target_type"),
         "official": bool(platforms.is_official(pid)),
         "group_openid": str(rule.get("target_id") or "").strip(),
+        "reply_msg_id": reply_msg_id,
         "question": q,
         # 作答模式在开题时快照下来：会话进行中改规则不影响这一题
         # strict=一人一票先到先得（重复作答不作数）/ loose=以最后一次为准（可改答案）

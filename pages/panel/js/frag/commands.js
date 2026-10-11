@@ -105,6 +105,8 @@ window.LsCommands = {
 
     function kindLabel(kind) {
       if (kind === 'menu') return '菜单';
+      if (kind === 'subscribe') return '订阅';
+      if (kind === 'unsubscribe') return '退订';
       if (kind === 'quiz') return '答题';
       return '推送';
     }

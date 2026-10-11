@@ -16,8 +16,9 @@ window.LsItemsCore = {
       list: [], tags: [], levels: [], groups: [],   // groups 是**全库**分组（不受当前筛选收窄）
       loading: false, error: '',
       confirmId: '',                 // 行内二段确认（点「删除」→变「确认删除」）
-      selected: {},                 // {id: true} 批量勾选集合（跨页保留）
-      selectAll: false,             // 表头「本页全选」状态
+      selected: {},                 // 批量删除：已勾选的 id（跨页保留）
+      selectedCount: 0,             // 已勾选数量（响应式，给工具栏按钮用）
+      selectAll: false,             // 当前页是否全选
       loadedLang: '',               // 已经拉过数据的语言（换回来不必重复请求）
       preview: null,                 // 导入预览结果 {token,total,sample,groups,group}
       mode: 'merge',                 // 导入方式：merge=合并去重 / group=覆盖同名分组 / all=清空整库
@@ -93,34 +94,33 @@ window.LsItemsCore = {
       hooks.lsState();
     }
 
-    // ---------------- 批量勾选删除 ----------------
+    // 批量删除：行勾选 / 全选 / 删除选中
     function toggleSelect(item) {
       if (!item) return;
       if (s.selected[item.id]) delete s.selected[item.id];
       else s.selected[item.id] = true;
-      s.selectAll = !!s.list.length && s.list.every((it) => s.selected[it.id]);
+      s.selectedCount = Object.keys(s.selected).length;
+      s.selectAll = s.list.length > 0 && s.list.every((it) => s.selected[it.id]);
     }
 
-    function toggleSelectAll() {
+    function selectAllToggle() {
       if (s.selectAll) {
-        s.list.forEach((it) => { delete s.selected[it.id]; });
+        s.selected = {};
         s.selectAll = false;
       } else {
-        s.list.forEach((it) => { s.selected[it.id] = true; });
+        for (const it of s.list) s.selected[it.id] = true;
         s.selectAll = true;
       }
+      s.selectedCount = Object.keys(s.selected).length;
     }
 
     async function removeSelected() {
       const ids = Object.keys(s.selected);
-      if (!ids.length) { ctx.notice('请先勾选要删除的条目', 'err'); return; }
-      s.busy = true;
+      if (!ids.length) return;
       const j = await hooks.lsPostJson('/item/delete-many', { lang: ls.lang, kind: key, ids });
-      s.busy = false;
-      if (!j.ok) { ctx.notice(j.message || '批量删除失败', 'err'); return; }
-      ctx.notice(j.message || `已删除 ${j.removed} 条`, 'ok');
-      s.selected = {};
-      s.selectAll = false;
+      if (!j.ok) { ctx.notice(j.message || '删除失败', 'err'); return; }
+      ctx.notice(j.message || `已删除 ${j.removed || ids.length} 条`, 'ok');
+      s.selected = {}; s.selectedCount = 0; s.selectAll = false;
       load(s.page);
       hooks.lsState();
     }
@@ -261,7 +261,7 @@ window.LsItemsCore = {
       [`${key}Page`]: pageGo,
       [`${key}Delete`]: remove,
       [`${key}ToggleSelect`]: toggleSelect,
-      [`${key}SelectAll`]: toggleSelectAll,
+      [`${key}SelectAll`]: selectAllToggle,
       [`${key}RemoveSelected`]: removeSelected,
       [`${key}EditOpen`]: editOpen,
       [`${key}PickFile`]: pickFile,

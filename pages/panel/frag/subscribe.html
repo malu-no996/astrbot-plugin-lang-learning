@@ -1,0 +1,153 @@
+<!-- frag/subscribe.html —— 订阅管理模块（二级页签「订阅管理」）
+     显示每个群订阅了哪些服务（群ID / 群名 / 订阅人ID / 订阅人 / 服务列表 / 停用启动 / 删除）。
+     除「群ID」「订阅人ID」外，其余字段都可在编辑浮层里改。
+     群内发「订阅日语单词」「订阅英语语法」「订阅日语答题」「订阅日语新闻」等命令即可新增订阅。 -->
+<div v-show="ls.tab==='subscribe'">
+  <div class="ls-toolbar">
+    <strong>订阅管理</strong>
+    <span class="muted">群内发送「订阅X语单词 / 语法 / 答题 / 新闻」即可新增订阅；这里可编辑 / 停用 / 删除。</span>
+  </div>
+
+  <p v-if="ls.subscribe.loading" class="muted">加载中…</p>
+  <p v-else-if="!ls.subscribe.list.length" class="muted">
+    还没有任何订阅。在群里发「订阅X语单词 / 语法 / 答题 / 新闻」即可创建（X = 英 / 日 / 韩 / 泰）。
+  </p>
+
+  <table v-else class="ls-table">
+    <thead>
+      <tr>
+        <th style="width:18%">群ID</th>
+        <th style="width:12%">群名</th>
+        <th style="width:14%">订阅人ID</th>
+        <th style="width:10%">订阅人</th>
+        <th style="width:28%">服务列表</th>
+        <th style="width:8%">间隔(分)</th>
+        <th style="width:10%">状态</th>
+        <th style="width:24%">操作</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr v-for="sub in ls.subscribe.list" :key="sub.group_id">
+        <td style="word-break:break-all">{{ sub.group_id }}</td>
+        <td>{{ sub.group_name || '—' }}</td>
+        <td style="word-break:break-all">{{ sub.subscriber_id }}</td>
+        <td>{{ sub.subscriber_name || '—' }}</td>
+        <td>{{ lsSubsFmtServiceList(sub) }}</td>
+        <td>{{ sub.interval_minutes }}</td>
+        <td>
+          <button class="ls-btn-xs" :style="sub.enabled ? 'color:var(--ok);border-color:var(--ok)' : 'color:var(--muted)'"
+                  @click="lsSubsToggle(sub)">{{ sub.enabled ? '启用中' : '已停用' }}</button>
+        </td>
+        <td>
+          <button class="ls-btn-xs" @click="lsSubsEditOpen(sub)">编辑</button>
+          <button class="ls-btn-xs" @click="lsSubsTestOpen(sub)">测试</button>
+          <button class="ls-btn-xs" :class="{ 'ls-btn-danger': ls.subscribe.delConfirm === sub.group_id }"
+                  @click="lsSubsDel(sub)">
+            {{ ls.subscribe.delConfirm === sub.group_id ? '确认删除' : '删除' }}
+          </button>
+          <button v-if="ls.subscribe.delConfirm === sub.group_id" class="ls-btn-xs" @click="lsSubsDelCancel()">取消</button>
+        </td>
+      </tr>
+    </tbody>
+  </table>
+
+  <!-- 编辑浮层：除群ID / 订阅人ID 外均可改 -->
+  <div class="modal" v-if="ls.subscribe.editForm" @click.self="lsSubsEditCancel()">
+    <div class="modal-box">
+      <h3>编辑订阅</h3>
+      <p class="muted">群ID、订阅人ID 不可修改。</p>
+
+      <div class="row">
+        <label class="ls-field"><span>群ID</span><input class="ls-input" :value="ls.subscribe.editForm.group_id" disabled></label>
+        <label class="ls-field"><span>群名</span><input class="ls-input" v-model="ls.subscribe.editForm.group_name"></label>
+      </div>
+      <div class="row">
+        <label class="ls-field"><span>订阅人ID</span><input class="ls-input" :value="ls.subscribe.editForm.subscriber_id" disabled></label>
+        <label class="ls-field"><span>订阅人</span><input class="ls-input" v-model="ls.subscribe.editForm.subscriber_name"></label>
+      </div>
+      <div class="row">
+        <label class="ls-field"><span>推送间隔(分)</span>
+          <input class="ls-input" type="number" min="10" max="1440" v-model.number="ls.subscribe.editForm.interval_minutes"></label>
+        <label class="ls-field ls-check">
+          <input type="checkbox" v-model="ls.subscribe.editForm.enabled"> 启用（停用后不再主动推送）</label>
+      </div>
+
+      <div class="ls-field ls-field-wide">
+        <span>服务列表（勾选 = 该群订阅此服务）</span>
+        <table class="ls-table" style="margin-top:6px">
+          <thead>
+            <tr>
+              <th style="width:20%"></th>
+              <th v-for="t in ls.subscribe.serviceTypes" :key="t" style="text-align:center">{{ ls.subscribe.serviceLabels[t] }}</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="l in ls.subscribe.langs" :key="l.key">
+              <th>{{ l.label }}</th>
+              <td v-for="t in ls.subscribe.serviceTypes" :key="l.key + t" style="text-align:center">
+                <input type="checkbox" :checked="lsSubsHasServiceEdit(l.key, t)" @change="lsSubsToggleService(l.key, t)">
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="actions">
+        <button @click="lsSubsEditCancel()">取消</button>
+        <button class="ls-btn-primary" @click="lsSubsSave()">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 测试浮层：与编辑窗同布局，但服务矩阵里的勾选框改成「测试」按钮 -->
+  <div class="modal" v-if="ls.subscribe.testForm" @click.self="lsSubsTestCancel()">
+    <div class="modal-box">
+      <h3>测试订阅</h3>
+      <p class="muted">点击下方任意格子的「测试」按钮，即向该群发送一次对应功能的回复。</p>
+
+      <div class="row">
+        <label class="ls-field"><span>群ID</span><input class="ls-input" :value="ls.subscribe.testForm.group_id" disabled></label>
+        <label class="ls-field"><span>群名</span><input class="ls-input" :value="ls.subscribe.testForm.group_name || '—'" disabled></label>
+      </div>
+      <div class="row">
+        <label class="ls-field"><span>订阅人ID</span><input class="ls-input" :value="ls.subscribe.testForm.subscriber_id" disabled></label>
+        <label class="ls-field"><span>订阅人</span><input class="ls-input" :value="ls.subscribe.testForm.subscriber_name || '—'" disabled></label>
+      </div>
+      <div class="row">
+        <label class="ls-field"><span>推送间隔(分)</span>
+          <input class="ls-input" type="number" :value="ls.subscribe.testForm.interval_minutes" disabled></label>
+        <label class="ls-field ls-check">
+          <input type="checkbox" :checked="ls.subscribe.testForm.enabled" disabled> 启用状态</label>
+      </div>
+
+      <div class="ls-field ls-field-wide">
+        <span>服务列表（点击「测试」发送对应功能）</span>
+        <table class="ls-table" style="margin-top:6px">
+          <thead>
+            <tr>
+              <th style="width:20%"></th>
+              <th v-for="t in ls.subscribe.serviceTypes" :key="t" style="text-align:center">{{ ls.subscribe.serviceLabels[t] }}</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="l in ls.subscribe.langs" :key="l.key">
+              <th>{{ l.label }}</th>
+              <td v-for="t in ls.subscribe.serviceTypes" :key="l.key + t" style="text-align:center">
+                <button class="ls-btn-xs"
+                        :class="{ 'ls-btn-primary': ls.subscribe.testRunningKey !== l.key + '_' + t }"
+                        :disabled="!!ls.subscribe.testRunningKey"
+                        @click="lsSubsTestRun(l.key, t)">
+                  {{ ls.subscribe.testRunningKey === l.key + '_' + t ? '发送中…' : '测试' }}
+                </button>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="actions">
+        <button @click="lsSubsTestCancel()">关闭</button>
+      </div>
+    </div>
+  </div>
+</div>

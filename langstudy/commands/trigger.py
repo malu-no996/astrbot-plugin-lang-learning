@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 from .. import base, cmdconf, rules as rules_store
+from .. import subs as subs_mod
 from ..quiz import rules as quiz_rules
 from ..quiz.types import LEVEL_RANK, TYPE_ORDER  # noqa: F401 —— 参数解析要用到，见 args.py
 
@@ -58,17 +59,8 @@ def menu_trigger(lang: str) -> str:
 
 
 def menu_langs(word: str) -> list[str]:
-    """这个词命中哪些语言的「学习菜单 / 菜单」命令（可能多条语言重名，都算）。
-
-    简版「菜单」（`日语菜单`）是「学习菜单」（`日语学习菜单`）的别名，复用同一套菜单逻辑，
-    命中同一语言只算一次（去重），不会发两条。
-    """
-    out: list[str] = []
-    for k in base.LANG_KEYS:
-        if _same(menu_trigger(k), word) or _same(cmdconf.default_short_menu_trigger(k), word):
-            if k not in out:
-                out.append(k)
-    return out
+    """这个词命中哪些语言的「学习菜单」命令（可能多条语言重名，都算）。"""
+    return [k for k in base.LANG_KEYS if _same(menu_trigger(k), word)]
 
 
 def prefix_text() -> str:
@@ -104,7 +96,6 @@ def _menu_default_words() -> set[str]:
     out: set[str] = set()
     for lang in base.LANG_KEYS:
         out.add(cmdconf.default_menu_trigger(lang))
-        out.add(cmdconf.default_short_menu_trigger(lang))   # 简版「X语菜单」别名
         for kind in base.KINDS:
             out.add(f"{base.lang_label(lang)}{base.kind_label(kind)}")
         out.add(f"{base.lang_label(lang)}答题")
@@ -118,6 +109,7 @@ def known_words() -> set[str]:
     切分必须**先知道有哪些词**，不能简单按空格砍（用户自定义的触发词本身可能带空格）。
     """
     out: set[str] = set(_menu_default_words())
+    out |= subs_mod.all_subscribe_cmd_words()
     for lang in base.LANG_KEYS:
         out.add(menu_trigger(lang))
         for slot in cmdconf.CMD_SLOTS:

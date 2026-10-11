@@ -20,12 +20,15 @@
   </div>
 
   <p class="muted" style="margin:0 0 10px">
-    命令<strong>只在群里生效</strong>。这张表<strong>固定四行</strong>（菜单 / 单词 / 语法 / 答题，
-    任何语言都一样）—— 本语言还没建规则的行也在，触发词照样能先填（等规则建出来自动接上，
+    命令<strong>只在群里生效</strong>。这张表<strong>固定命令分组</strong>（菜单 / 单词 / 语法 / 答题，
+    以及下面的<strong>订阅 / 退订</strong>，各含单词 / 语法 / 答题 / 新闻——共 8 行，任何语言都一样）
+    —— 本语言还没建规则的行也在，触发词照样能先填（等规则建出来自动接上，
     那时「发到哪」才能配）。
     「触发词」列<strong>留空 = 用默认词</strong>（灰字就是当前默认），改完点那一行的「保存」
     （只改命令词，不影响定时排期）。
-    「发到哪」是<strong>命令触发</strong>的投递目标：<strong>一条记录 = 一台机器人 + 它发到哪</strong>
+    <strong>订阅 / 退订是群内命令</strong>：在群里发就作用于<strong>发命令的那个群</strong>，
+    没有「发到哪」配置（那列显示「群内命令」），触发后要么立即推一次、要么移除订阅。
+    「发到哪」是<strong>单词 / 语法 / 答题</strong>命令触发的投递目标：<strong>一条记录 = 一台机器人 + 它发到哪</strong>
     （可加多条）。<strong>一条都不加 = 随发随地</strong>（收到命令的那台 + 发命令的那个群）；
     只想换台机器人发 → 加一行选「任何群可用」
     （与「定时推送发到哪」是两条线，后者见灰字）。
@@ -51,7 +54,7 @@
 
   <div class="ls-toolbar">
     <span class="muted ls-grow">
-      固定四条命令：菜单 / 单词 / 语法 / 答题（任何语言都一样）
+      固定命令：菜单 / 单词 / 语法 / 答题 / 订阅×4 / 退订×4（任何语言都一样）
     </span>
     <button class="ls-btn-xs" @click="lsCmdLoad()">刷新</button>
   </div>
@@ -85,13 +88,14 @@
           <div class="muted">{{ it.custom ? '已自定义 · 清空并保存可恢复默认' : '默认：' + it.default }}</div>
         </td>
         <td>
-          <span class="muted" v-if="!it.has_rule">（本语言还没建规则）</span>
-          <template v-else>
+          <span class="muted" v-if="it.no_target">（群内命令，自动作用于当前群）</span>
+          <template v-else-if="it.has_rule">
             <span>{{ it.target_text }}</span>
             <div v-if="it.kind!=='menu'">
               <button class="ls-btn-xs" @click="lsCmdTargetsOpen(it)">配置</button>
             </div>
           </template>
+          <span class="muted" v-else>（本语言还没建规则）</span>
         </td>
         <td>
           <button class="ls-btn-xs" @click="lsCmdSave(it)">保存</button>

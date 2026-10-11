@@ -14,5 +14,6 @@ from . import items as items_routes  # noqa: F401
 from . import news as news_routes  # noqa: F401
 from . import push as push_routes  # noqa: F401
 from . import quiz as quiz_routes  # noqa: F401
+from . import subs as subs_routes  # noqa: F401
 
-MODULES = (items_routes, push_routes, quiz_routes, news_routes, commands_routes)
+MODULES = (items_routes, push_routes, quiz_routes, news_routes, commands_routes, subs_routes)

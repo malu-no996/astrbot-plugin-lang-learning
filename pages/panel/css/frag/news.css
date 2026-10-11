@@ -80,3 +80,15 @@
   padding: 12px 14px;
   margin: 8px 0;
 }
+
+/* 订阅了本语言新闻的群（新闻推送规则区内，仅新闻、可编辑推送参数） */
+.ls-sub-block {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px dashed var(--line, #e3e3e8);
+}
+.ls-input-sm {
+  width: 72px;
+  padding: 2px 6px;
+}
+

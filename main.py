@@ -37,6 +37,7 @@ from loguru import logger
 
 from .langstudy import commands, platforms
 from .langstudy import push as push_mod
+from .langstudy import subs as subs_mod
 from .langstudy.news import push as news_push
 from .langstudy.paths import ensure_dirs
 from .langstudy.quiz import session as quiz_session
@@ -58,11 +59,13 @@ class LangstudyPlugin(Star):
     # ==================================================================
 
     async def initialize(self):
-        """启动三条后台循环（推送 / 答题 / 新闻）。"""
+        """启动后台循环（推送 / 答题 / 新闻 / 订阅）。"""
+        subs_mod.set_enabled_flag(bool(self.config.get("enabled", True)))
         self._tasks.append(push_mod.start())
         self._tasks.append(quiz_session.start())
         self._tasks.append(news_push.start())
-        logger.info("外语学习：三条后台循环已启动（推送 / 答题 / 新闻）")
+        self._tasks.append(subs_mod.start())
+        logger.info("外语学习：后台循环已启动（推送 / 答题 / 新闻 / 订阅）")
 
     async def terminate(self):
         for t in self._tasks:
@@ -110,6 +113,7 @@ class LangstudyPlugin(Star):
             payload = {}
         on = bool((payload or {}).get("enabled", not self.config.get("enabled", True)))
         self.config["enabled"] = on
+        subs_mod.set_enabled_flag(on)
         # 插件配置是 AstrBotConfig（dict 子类），它自己带 save_config()；
         # 不同版本拿到的可能只是普通 dict —— 那就只改内存，落盘失败也不影响本次开关。
         save = getattr(self.config, "save_config", None)

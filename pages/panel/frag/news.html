@@ -104,6 +104,49 @@
         </tr>
       </tbody>
     </table>
+
+    <!-- 订阅了本语言新闻的群（仅在新闻推送规则区显示新闻订阅，可编辑推送参数） -->
+    <div class="ls-sub-block">
+      <div class="ls-card-head">
+        <strong>订阅了{{ lsLangLabel() }}新闻的群（可编辑推送参数）</strong>
+        <button class="ls-btn-xs" @click="lsNewsSubsLoad()">刷新</button>
+      </div>
+      <p v-if="ls.news.newsSubsBusy" class="muted">加载中…</p>
+      <p v-else-if="!ls.news.newsSubs.length" class="muted">
+        还没有群通过「订阅{{ lsLangLabel() }}新闻」命令订阅。在群里发「订阅{{ lsLangLabel() }}新闻」即会出现在这，可在此编辑推送间隔与每期条数。
+      </p>
+      <table v-else class="ls-table">
+        <thead>
+          <tr>
+            <th style="width:14%">群ID</th>
+            <th style="width:15%">群名</th>
+            <th style="width:11%">订阅人</th>
+            <th style="width:13%">推送间隔(分)</th>
+            <th style="width:9%">每期条数</th>
+            <th style="width:9%">状态</th>
+            <th style="width:14%">最近推送</th>
+            <th style="width:15%">操作</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="sub in ls.news.newsSubs" :key="sub.group_id">
+            <td>{{ sub.group_id }}</td>
+            <td>{{ sub.group_name || '—' }}</td>
+            <td>{{ sub.subscriber_name || sub.subscriber_id || '—' }}</td>
+            <td><input class="ls-input ls-input-sm" type="number" min="10" max="1440" v-model.number="sub.interval_minutes"></td>
+            <td><input class="ls-input ls-input-sm" type="number" min="1" max="20" v-model.number="sub.news_count"></td>
+            <td>
+              <button class="ls-btn-xs" :class="sub.enabled ? '' : 'ls-btn-danger'" @click="sub.enabled = !sub.enabled">{{ sub.enabled ? '启用中' : '已停用' }}</button>
+            </td>
+            <td class="muted">{{ lsNewsFmt((sub.last_sent||{})[ls.lang + '_news']) }}</td>
+            <td>
+              <button class="ls-btn-xs ls-btn-primary" @click="lsNewsSubsSave(sub)">保存</button>
+              <button class="ls-btn-xs" @click="lsNewsSubsLoad()">撤销</button>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
   </div>
 </div>
 

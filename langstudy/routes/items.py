@@ -145,17 +145,17 @@ async def api_item_delete():
 
 
 async def api_item_delete_many():
-    """批量删除：一次删掉勾选的多条（按 id 列表）。"""
+    """批量删除（前端勾选后一次性提交）。"""
     payload = await body()
     lang, kind = base.norm_lang(payload.get("lang")), base.norm_kind(payload.get("kind"))
     if not lang or not kind:
         return fail("缺少语言或类型")
-    ids = payload.get("ids")
+    ids = payload.get("ids") or []
     if not isinstance(ids, list) or not ids:
-        return fail("没有要删除的条目")
-    removed = store.delete_items(lang, kind, [str(x) for x in ids])
+        return fail("请先勾选要删除的条目")
+    removed = store.delete_items(lang, kind, ids)
     if not removed:
-        return fail("没有匹配到可删除的条目")
+        return fail("没有匹配的条目（可能已被删除）")
     return ok(removed=removed, message=f"已删除 {removed} 条")
 
 

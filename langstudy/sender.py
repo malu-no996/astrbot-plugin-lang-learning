@@ -29,6 +29,7 @@ from __future__ import annotations
 import asyncio
 import base64 as b64
 import random
+import time
 import urllib.request
 
 from loguru import logger
@@ -67,16 +68,17 @@ def _official_api(platform_id: str):
 
 async def _send_official(platform_id: str, target_type: str, target_id: str,
                          text: str, keyboard: dict | None = None,
-                         reply_msg_id: str | None = None) -> None:
-    """官方机器人发**一条** markdown 消息（`keyboard` 有就一并挂上，按钮只能挂 markdown 上）。
-
-    `reply_msg_id`：被动回复时必须传触发消息的消息 ID，否则官方会判定为「主动消息」并
-    以「无权限」拒绝。定时推送 / 主动任务不传即可（走主动消息通道，需机器人有主动权限）。
+                         reply_msg_id: str | None = None,
+                         raw: bool = False) -> None:
+    """官方机器人发**一条**消息（`keyboard` 有就一并挂上，按钮只能挂 markdown 上）。
 
     三档降级（每档都记日志，别静默）：
       ① markdown + 按钮  → ② markdown（去掉按钮）→ ③ 纯文本 content。
     前两档失败基本都出在「按钮是内邀能力、没开通」或模板里有个官方渲染器不认的写法上，
     第 ③ 档只在连 markdown 都发不出去时才用 —— 不能因为按钮把整条消息搭进去。
+
+    `raw=True` 时跳过 markdown，直接发 `msg_type=0` 纯文本（泰语等小众文字在官方
+    markdown 渲染器上可能直接报错，走纯文本更稳）。
     """
     api = _official_api(platform_id)
     if api is None:
@@ -87,24 +89,39 @@ async def _send_official(platform_id: str, target_type: str, target_id: str,
     md = textutil.to_markdown(text)
     if not md.strip():
         raise RuntimeError("正文为空，官方机器人会拒收（content 不能为空）")
+    if not text.strip():
+        raise RuntimeError("正文为空，官方机器人会拒收（content 不能为空）")
 
     private = str(target_type or "group") == "private"
     seq = random.randint(1, 10000)
 
     async def _post(payload: dict):
-        if private:
-            return await api.post_c2c_message(openid=sid, **payload)
         payload = dict(payload)
+        if reply_msg_id:
+            # 被动回复：带上用户消息 id，QQ 官方才会判定为「被动消息」而非「主动消息」
+            # （主动消息在没开通「主动推送」权限时会被直接拒，报「无权限」）
+            payload["msg_id"] = reply_msg_id
+        if private:
+            if reply_msg_id:
+                payload["msg_seq"] = seq
+            return await api.post_c2c_message(openid=sid, **payload)
         payload["msg_seq"] = seq
         return await api.post_group_message(group_openid=sid, **payload)
+
+    # raw=True：直接走纯文本（泰语等小众文字在官方 markdown 渲染器上可能报错）
+    if raw:
+        try:
+            await _post({"msg_type": 0, "content": text})
+            logger.info(f"外语学习：官方纯文本已发出（{sid}）")
+            return
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(f"外语学习：官方纯文本发送失败（{sid}）：{exc}")
+            raise
 
     # ① markdown + 按钮
     payload: dict = {"msg_type": 2, "markdown": {"content": md}}
     if keyboard:
         payload["keyboard"] = keyboard
-    if reply_msg_id:
-        # 被动回复必须引用触发消息 ID；主动任务/定时推送不要传
-        payload["msg_id"] = str(reply_msg_id)
     try:
         await _post(payload)
         if keyboard is not None:
@@ -118,19 +135,17 @@ async def _send_official(platform_id: str, target_type: str, target_id: str,
         logger.warning(f"外语学习：官方 markdown 发送失败：{exc}")
         if not keyboard:
             # 没带按钮还失败 → 直接走 ③
-            await _post({"msg_type": 0, "content": text, **({"msg_id": str(reply_msg_id)} if reply_msg_id else {})})
+            await _post({"msg_type": 0, "content": text})
             return
     # ② 去掉按钮再发一次 markdown
     try:
-        await _post({"msg_type": 2, "markdown": {"content": md},
-                     **({"msg_id": str(reply_msg_id)} if reply_msg_id else {})})
+        await _post({"msg_type": 2, "markdown": {"content": md}})
         logger.warning(f"外语学习：官方按钮未渲染（已降级为不带按钮的 markdown）：{sid}")
         return
     except Exception as exc:  # noqa: BLE001
         logger.warning(f"外语学习：官方去掉按钮后仍失败，退纯文本：{exc}")
     # ③ 兜底纯文本
-    await _post({"msg_type": 0, "content": text,
-                 **({"msg_id": str(reply_msg_id)} if reply_msg_id else {})})
+    await _post({"msg_type": 0, "content": text})
 
 
 def _kb_count(keyboard: dict | None) -> int:
@@ -142,16 +157,34 @@ def _kb_count(keyboard: dict | None) -> int:
         return 0
 
 
+def permission_hint(err: str) -> str | None:
+    """若发送错误像是「QQ 官方主动推送权限不足」，返回可读提示；否则 None。
+
+    把 botpy 抛出的 `ServerError: 主动消息失败, 无权限` 这类底层错误翻译成
+    「去 QQ开放平台 开启主动推送权限」的可操作指引，而不是让用户面对一句看不懂的报错。
+    定时推送 / 管理页测试推送都算主动消息，没开权限就会被拒；被动回复（群里发命令后
+    机器人回的那条）不需要该权限。
+    """
+    e = str(err or "")
+    if any(k in e for k in ("无权限", "主动消息", "主动推送", "permission denied",
+                            "Forbidden", "403")):
+        return ("\n⚠️ 这是 QQ 官方机器人的「主动推送」权限不足：定时推送 / 管理页测试推送"
+                "都算主动消息，需先到 QQ开放平台 → 你的机器人 → 开发设置 → 开启"
+                "「主动推送 / 消息推送」权限并重连机器人。\n如果只是想验证效果，可在群里发"
+                "「订阅X语新闻」命令，机器人会作为被动回复推送，无需该权限。")
+    return None
+
+
 # ---------------- 对外：发一条文本 ----------------
 
 
 async def send_text(platform_id: str, target_type: str, target_id: str, text: str,
-                    keyboard: dict | None = None,
-                    reply_msg_id: str | None = None) -> None:
+                    keyboard: dict | None = None, reply_msg_id: str | None = None,
+                    raw: bool = False) -> None:
     """发**一条**消息。`keyboard` 只有 QQ 官方群聊用得上（答题选项 / 学习菜单按钮）。
 
-    `reply_msg_id`：命令被动回复时带上用户触发消息的消息 ID；官方机器人发群消息必须
-    这样才能避免被判成「主动消息」（出错：主动消息失败，无权限）。
+    `raw=True` 时官方机器人直接走 `msg_type=0` 纯文本，不转 markdown（适合泰语等
+    在官方 markdown 渲染器上可能报错的小众文字）。OneBot 不受此参数影响。
 
     失败一律抛异常，由调用方决定「记进规则状态 / 回一句话给用户」。
     """
@@ -161,12 +194,113 @@ async def send_text(platform_id: str, target_type: str, target_id: str, text: st
     if not str(platform_id or "").strip():
         raise RuntimeError("未指定发送用的平台实例")
     if platforms.is_official(platform_id):
-        await _send_official(platform_id, target_type, target_id, text, keyboard, reply_msg_id)
+        await _send_official(platform_id, target_type, target_id, text, keyboard,
+                             reply_msg_id=reply_msg_id, raw=raw)
         return
     if keyboard is not None:
         # OneBot 没有按钮段 —— 这里只是记一句，正文照发（正文里本来就列了选项）
         logger.debug("外语学习：该平台不支持按钮（{}），本次忽略 keyboard", platform_id)
     await _send_by_session(platform_id, target_type, target_id, text)
+
+
+# ---------------- 对外：发一张图片 ----------------
+
+
+def _temp_image_path(data: bytes) -> str:
+    """把图片字节落盘到插件数据目录，返回绝对路径（OneBot 发图用）。"""
+    from .paths import DATA_DIR
+
+    d = DATA_DIR / "images"
+    d.mkdir(parents=True, exist_ok=True)
+    path = d / f"push_{int(time.time() * 1000)}_{random.randint(1000, 9999)}.png"
+    path.write_bytes(data)
+    return str(path)
+
+
+async def _official_image(platform_id: str, group_openid: str, data: bytes) -> dict | None:
+    """官方群：把图片字节上传成 `media`（`{"file_info": …}`）。失败返回 None。
+
+    ⚠️ 不能调 `api.post_group_file`（它只有 `url` 参数，无法传本地二进制），
+    必须像发音频那样直接 `api._http.request` 把 `file_data`(base64) 塞进 JSON body。
+    """
+    api = _official_api(platform_id)
+    if api is None:
+        return None
+    http = getattr(api, "_http", None)
+    if http is None:
+        return None
+    payload = {
+        "file_type": 1,                              # 1 = 图片
+        "srv_send_msg": False,
+        "group_openid": str(group_openid).strip(),
+        "file_data": b64.b64encode(data).decode("ascii"),
+    }
+    try:
+        res = await http.request(_route(f"/v2/groups/{group_openid}/files"), json=payload)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(f"外语学习：官方图片上传失败：{exc}")
+        return None
+    return res if isinstance(res, dict) and res.get("file_info") else None
+
+
+async def send_image(platform_id: str, target_type: str, target_id: str,
+                     data: bytes | str, reply_msg_id: str | None = None) -> None:
+    """发**一张**图片。`data` 为 bytes 或本地文件路径 / http URL。
+
+    官方机器人走富媒体 msg_type=7；OneBot 走 Image 消息段。
+    """
+    pid = str(platform_id or "").strip()
+    tid = str(target_id or "").strip()
+    if not pid or not tid:
+        raise RuntimeError("发图片需要 platform_id 和 target_id")
+
+    is_group = str(target_type or "group") != "private"
+
+    # 统一把输入变成 bytes
+    raw: bytes
+    if isinstance(data, bytes):
+        raw = data
+    elif str(data).startswith(("http://", "https://")):
+        try:
+            req = urllib.request.Request(str(data), headers={"User-Agent": "Mozilla/5.0"})
+            raw = urllib.request.urlopen(req, timeout=30).read()  # noqa: S310
+        except Exception as exc:  # noqa: BLE001
+            raise RuntimeError(f"图片下载失败：{exc}") from exc
+    else:
+        raw = open(str(data), "rb").read()
+
+    if not raw:
+        raise RuntimeError("图片数据为空")
+
+    if platforms.is_official(pid):
+        if not is_group:
+            raise RuntimeError("官方机器人暂不支持私聊发图")
+        media = await _official_image(pid, tid, raw)
+        if media is None:
+            raise RuntimeError("官方图片上传失败，无法发送")
+        api = _official_api(pid)
+        await api.post_group_message(
+            group_openid=tid,
+            msg_type=7,
+            media=media,
+            msg_seq=random.randint(1, 10000),
+            **({"msg_id": reply_msg_id} if reply_msg_id else {}),
+        )
+        logger.info("外语学习：图片已作为官方富媒体发出（group=%s）", tid)
+        return
+
+    # OneBot / 其它平台
+    from astrbot.api.message_components import Image
+    from astrbot.core.message.message_event_result import MessageChain
+
+    ctx = platforms.context()
+    if ctx is None:
+        raise RuntimeError("langstudy：AstrBot Context 未绑定")
+    kind = "GroupMessage" if is_group else "FriendMessage"
+    origin = f"{pid}:{kind}:{tid}"
+    path = _temp_image_path(raw)
+    await ctx.send_message(origin, MessageChain(chain=[Image(file=path)]))
+    logger.info("外语学习：图片已发出（%s）", origin)
 
 
 # ---------------- 听力题：发一条音频 ----------------
@@ -243,8 +377,6 @@ async def send_audio(platform_id: str, target_type: str, target_id: str, url: st
                      reply_msg_id: str | None = None) -> bool:
     """**单独发一条音频**（真音频消息，不是正文里的链接）。成功 True，失败/不支持 False。
 
-    `reply_msg_id`：被动回复时带上触发消息 ID，避免官方判为主动消息。
-
     失败一律返回 False（异常吞掉只记 warning），由调用方降级 —— 听力题那边会退化成
     正文里给一行链接，至少还能点开听。
     """
@@ -260,13 +392,10 @@ async def send_audio(platform_id: str, target_type: str, target_id: str, url: st
             if media is None:
                 return False
             api = _official_api(platform_id)
-            seq = random.randint(1, 10000)
-            payload = {"group_openid": str(target_id).strip(),
-                       "msg_type": 7, "media": media,
-                       "msg_seq": seq}
-            if reply_msg_id:
-                payload["msg_id"] = str(reply_msg_id)
-            await api.post_group_message(**payload)
+            await api.post_group_message(group_openid=str(target_id).strip(),
+                                         msg_type=7, media=media,
+                                         msg_seq=random.randint(1, 10000),
+                                         **({"msg_id": reply_msg_id} if reply_msg_id else {}))
             logger.info("外语学习：音频已作为官方富媒体发出（group=%s）", target_id)
             return True
         from astrbot.api.message_components import Record

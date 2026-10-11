@@ -35,13 +35,11 @@
            @change="lsVocabPickFile($event)">
     <button @click="lsVocabExport('all')">导出全部（Anki 可用）</button>
     <button @click="lsVocabExport('query')">导出当前筛选</button>
-    <button @click="lsVocabRemoveSelected()" :disabled="!Object.keys(ls.vocab.selected).length"
-            :class="{'ls-btn-danger': Object.keys(ls.vocab.selected).length}">
-      删除选中（{{ Object.keys(ls.vocab.selected).length }}）
-    </button>
     <span class="muted">
       共 {{ ls.vocab.total }} 条 · 第 {{ ls.vocab.page }}/{{ ls.vocab.pages }} 页
     </span>
+    <button @click="lsVocabRemoveSelected()" v-if="ls.vocab.selectedCount"
+            class="ls-btn-danger">删除选中（{{ ls.vocab.selectedCount }}）</button>
   </div>
 
   <!-- 分组操作：选中某个分组后才出现（一次导入 = 一个分组，改名/删组都在这里） -->
@@ -131,14 +129,14 @@
     <thead>
       <tr>
         <th style="width:4%"><input type="checkbox" :checked="ls.vocab.selectAll" @change="lsVocabSelectAll()"></th>
-        <th style="width:14%">词条</th>
+        <th style="width:12%">词条</th>
         <th style="width:10%">分组</th>
         <th style="width:11%">读音</th>
         <th style="width:18%">释义</th>
         <th style="width:20%">例句</th>
         <th style="width:8%">标签</th>
         <th style="width:5%">等级</th>
-        <th style="width:10%">操作</th>
+        <th style="width:12%">操作</th>
       </tr>
     </thead>
     <tbody>

@@ -71,7 +71,7 @@ async def run_menu(platform_id: str, target_type: str, target_id: str, lang: str
     text = menu_body(lang, items, has_buttons=kb is not None)
     try:
         await sender.send_text(platform_id, target_type, target_id, text, keyboard=kb,
-                               reply_msg_id=reply_msg_id)
+                              reply_msg_id=reply_msg_id)
     except Exception as exc:  # noqa: BLE001
         logger.warning(f"外语菜单：发送失败：{exc}")
         return {"ok": False, "message": f"发送失败：{exc}"}

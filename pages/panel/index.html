@@ -58,6 +58,7 @@
         </span>
         <span class="tab" :class="{active: ls.tab==='news'}" @click="lsTabTo('news')">新闻推送</span>
         <span class="tab" :class="{active: ls.tab==='commands'}" @click="lsTabTo('commands')">命令配置</span>
+        <span class="tab" :class="{active: ls.tab==='subscribe'}" @click="lsTabTo('subscribe')">订阅管理</span>
       </nav>
 
       <!-- frag/vocab.html —— 单词管理（增删改查 + 搜索过滤 + Anki/ZIP 导入导出）
@@ -97,13 +98,11 @@
            @change="lsVocabPickFile($event)">
     <button @click="lsVocabExport('all')">导出全部（Anki 可用）</button>
     <button @click="lsVocabExport('query')">导出当前筛选</button>
-    <button @click="lsVocabRemoveSelected()" :disabled="!Object.keys(ls.vocab.selected).length"
-            :class="{'ls-btn-danger': Object.keys(ls.vocab.selected).length}">
-      删除选中（{{ Object.keys(ls.vocab.selected).length }}）
-    </button>
     <span class="muted">
       共 {{ ls.vocab.total }} 条 · 第 {{ ls.vocab.page }}/{{ ls.vocab.pages }} 页
     </span>
+    <button @click="lsVocabRemoveSelected()" v-if="ls.vocab.selectedCount"
+            class="ls-btn-danger">删除选中（{{ ls.vocab.selectedCount }}）</button>
   </div>
 
   <!-- 分组操作：选中某个分组后才出现（一次导入 = 一个分组，改名/删组都在这里） -->
@@ -193,14 +192,14 @@
     <thead>
       <tr>
         <th style="width:4%"><input type="checkbox" :checked="ls.vocab.selectAll" @change="lsVocabSelectAll()"></th>
-        <th style="width:14%">词条</th>
+        <th style="width:12%">词条</th>
         <th style="width:10%">分组</th>
         <th style="width:11%">读音</th>
         <th style="width:18%">释义</th>
         <th style="width:20%">例句</th>
         <th style="width:8%">标签</th>
         <th style="width:5%">等级</th>
-        <th style="width:10%">操作</th>
+        <th style="width:12%">操作</th>
       </tr>
     </thead>
     <tbody>
@@ -275,13 +274,11 @@
            @change="lsGrammarPickFile($event)">
     <button @click="lsGrammarExport('all')">导出全部（Anki 可用）</button>
     <button @click="lsGrammarExport('query')">导出当前筛选</button>
-    <button @click="lsGrammarRemoveSelected()" :disabled="!Object.keys(ls.grammar.selected).length"
-            :class="{'ls-btn-danger': Object.keys(ls.grammar.selected).length}">
-      删除选中（{{ Object.keys(ls.grammar.selected).length }}）
-    </button>
     <span class="muted">
       共 {{ ls.grammar.total }} 条 · 第 {{ ls.grammar.page }}/{{ ls.grammar.pages }} 页
     </span>
+    <button @click="lsGrammarRemoveSelected()" v-if="ls.grammar.selectedCount"
+            class="ls-btn-danger">删除选中（{{ ls.grammar.selectedCount }}）</button>
   </div>
 
   <!-- 分组操作：选中某个分组后才出现（导进来的整套语法点 = 一个分组） -->
@@ -357,14 +354,14 @@
     <thead>
       <tr>
         <th style="width:4%"><input type="checkbox" :checked="ls.grammar.selectAll" @change="lsGrammarSelectAll()"></th>
-        <th style="width:17%">句型</th>
+        <th style="width:15%">句型</th>
         <th style="width:10%">分组</th>
         <th style="width:12%">结构</th>
         <th style="width:20%">用法</th>
         <th style="width:20%">例句</th>
         <th style="width:7%">标签</th>
         <th style="width:4%">等级</th>
-        <th style="width:6%">操作</th>
+        <th style="width:8%">操作</th>
       </tr>
     </thead>
     <tbody>
@@ -1268,6 +1265,49 @@
         </tr>
       </tbody>
     </table>
+
+    <!-- 订阅了本语言新闻的群（仅在新闻推送规则区显示新闻订阅，可编辑推送参数） -->
+    <div class="ls-sub-block">
+      <div class="ls-card-head">
+        <strong>订阅了{{ lsLangLabel() }}新闻的群（可编辑推送参数）</strong>
+        <button class="ls-btn-xs" @click="lsNewsSubsLoad()">刷新</button>
+      </div>
+      <p v-if="ls.news.newsSubsBusy" class="muted">加载中…</p>
+      <p v-else-if="!ls.news.newsSubs.length" class="muted">
+        还没有群通过「订阅{{ lsLangLabel() }}新闻」命令订阅。在群里发「订阅{{ lsLangLabel() }}新闻」即会出现在这，可在此编辑推送间隔与每期条数。
+      </p>
+      <table v-else class="ls-table">
+        <thead>
+          <tr>
+            <th style="width:14%">群ID</th>
+            <th style="width:15%">群名</th>
+            <th style="width:11%">订阅人</th>
+            <th style="width:13%">推送间隔(分)</th>
+            <th style="width:9%">每期条数</th>
+            <th style="width:9%">状态</th>
+            <th style="width:14%">最近推送</th>
+            <th style="width:15%">操作</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="sub in ls.news.newsSubs" :key="sub.group_id">
+            <td>{{ sub.group_id }}</td>
+            <td>{{ sub.group_name || '—' }}</td>
+            <td>{{ sub.subscriber_name || sub.subscriber_id || '—' }}</td>
+            <td><input class="ls-input ls-input-sm" type="number" min="10" max="1440" v-model.number="sub.interval_minutes"></td>
+            <td><input class="ls-input ls-input-sm" type="number" min="1" max="20" v-model.number="sub.news_count"></td>
+            <td>
+              <button class="ls-btn-xs" :class="sub.enabled ? '' : 'ls-btn-danger'" @click="sub.enabled = !sub.enabled">{{ sub.enabled ? '启用中' : '已停用' }}</button>
+            </td>
+            <td class="muted">{{ lsNewsFmt((sub.last_sent||{})[ls.lang + '_news']) }}</td>
+            <td>
+              <button class="ls-btn-xs ls-btn-primary" @click="lsNewsSubsSave(sub)">保存</button>
+              <button class="ls-btn-xs" @click="lsNewsSubsLoad()">撤销</button>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
   </div>
 </div>
 
@@ -1400,12 +1440,15 @@
   </div>
 
   <p class="muted" style="margin:0 0 10px">
-    命令<strong>只在群里生效</strong>。这张表<strong>固定四行</strong>（菜单 / 单词 / 语法 / 答题，
-    任何语言都一样）—— 本语言还没建规则的行也在，触发词照样能先填（等规则建出来自动接上，
+    命令<strong>只在群里生效</strong>。这张表<strong>固定命令分组</strong>（菜单 / 单词 / 语法 / 答题，
+    以及下面的<strong>订阅 / 退订</strong>，各含单词 / 语法 / 答题 / 新闻——共 8 行，任何语言都一样）
+    —— 本语言还没建规则的行也在，触发词照样能先填（等规则建出来自动接上，
     那时「发到哪」才能配）。
     「触发词」列<strong>留空 = 用默认词</strong>（灰字就是当前默认），改完点那一行的「保存」
     （只改命令词，不影响定时排期）。
-    「发到哪」是<strong>命令触发</strong>的投递目标：<strong>一条记录 = 一台机器人 + 它发到哪</strong>
+    <strong>订阅 / 退订是群内命令</strong>：在群里发就作用于<strong>发命令的那个群</strong>，
+    没有「发到哪」配置（那列显示「群内命令」），触发后要么立即推一次、要么移除订阅。
+    「发到哪」是<strong>单词 / 语法 / 答题</strong>命令触发的投递目标：<strong>一条记录 = 一台机器人 + 它发到哪</strong>
     （可加多条）。<strong>一条都不加 = 随发随地</strong>（收到命令的那台 + 发命令的那个群）；
     只想换台机器人发 → 加一行选「任何群可用」
     （与「定时推送发到哪」是两条线，后者见灰字）。
@@ -1431,7 +1474,7 @@
 
   <div class="ls-toolbar">
     <span class="muted ls-grow">
-      固定四条命令：菜单 / 单词 / 语法 / 答题（任何语言都一样）
+      固定命令：菜单 / 单词 / 语法 / 答题 / 订阅×4 / 退订×4（任何语言都一样）
     </span>
     <button class="ls-btn-xs" @click="lsCmdLoad()">刷新</button>
   </div>
@@ -1465,13 +1508,14 @@
           <div class="muted">{{ it.custom ? '已自定义 · 清空并保存可恢复默认' : '默认：' + it.default }}</div>
         </td>
         <td>
-          <span class="muted" v-if="!it.has_rule">（本语言还没建规则）</span>
-          <template v-else>
+          <span class="muted" v-if="it.no_target">（群内命令，自动作用于当前群）</span>
+          <template v-else-if="it.has_rule">
             <span>{{ it.target_text }}</span>
             <div v-if="it.kind!=='menu'">
               <button class="ls-btn-xs" @click="lsCmdTargetsOpen(it)">配置</button>
             </div>
           </template>
+          <span class="muted" v-else>（本语言还没建规则）</span>
         </td>
         <td>
           <button class="ls-btn-xs" @click="lsCmdSave(it)">保存</button>
@@ -1541,6 +1585,160 @@
     <div class="actions">
       <button @click="lsCmdTargetsClose()">取消</button>
       <button @click="lsCmdTargetsSave()">保存</button>
+    </div>
+  </div>
+</div>
+
+      <!-- frag/subscribe.html —— 订阅管理模块（二级页签「订阅管理」）
+     显示每个群订阅了哪些服务（群ID / 群名 / 订阅人ID / 订阅人 / 服务列表 / 停用启动 / 删除）。
+     除「群ID」「订阅人ID」外，其余字段都可在编辑浮层里改。
+     群内发「订阅日语单词」「订阅英语语法」「订阅日语答题」「订阅日语新闻」等命令即可新增订阅。 -->
+<div v-show="ls.tab==='subscribe'">
+  <div class="ls-toolbar">
+    <strong>订阅管理</strong>
+    <span class="muted">群内发送「订阅X语单词 / 语法 / 答题 / 新闻」即可新增订阅；这里可编辑 / 停用 / 删除。</span>
+  </div>
+
+  <p v-if="ls.subscribe.loading" class="muted">加载中…</p>
+  <p v-else-if="!ls.subscribe.list.length" class="muted">
+    还没有任何订阅。在群里发「订阅X语单词 / 语法 / 答题 / 新闻」即可创建（X = 英 / 日 / 韩 / 泰）。
+  </p>
+
+  <table v-else class="ls-table">
+    <thead>
+      <tr>
+        <th style="width:18%">群ID</th>
+        <th style="width:12%">群名</th>
+        <th style="width:14%">订阅人ID</th>
+        <th style="width:10%">订阅人</th>
+        <th style="width:28%">服务列表</th>
+        <th style="width:8%">间隔(分)</th>
+        <th style="width:10%">状态</th>
+        <th style="width:24%">操作</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr v-for="sub in ls.subscribe.list" :key="sub.group_id">
+        <td style="word-break:break-all">{{ sub.group_id }}</td>
+        <td>{{ sub.group_name || '—' }}</td>
+        <td style="word-break:break-all">{{ sub.subscriber_id }}</td>
+        <td>{{ sub.subscriber_name || '—' }}</td>
+        <td>{{ lsSubsFmtServiceList(sub) }}</td>
+        <td>{{ sub.interval_minutes }}</td>
+        <td>
+          <button class="ls-btn-xs" :style="sub.enabled ? 'color:var(--ok);border-color:var(--ok)' : 'color:var(--muted)'"
+                  @click="lsSubsToggle(sub)">{{ sub.enabled ? '启用中' : '已停用' }}</button>
+        </td>
+        <td>
+          <button class="ls-btn-xs" @click="lsSubsEditOpen(sub)">编辑</button>
+          <button class="ls-btn-xs" @click="lsSubsTestOpen(sub)">测试</button>
+          <button class="ls-btn-xs" :class="{ 'ls-btn-danger': ls.subscribe.delConfirm === sub.group_id }"
+                  @click="lsSubsDel(sub)">
+            {{ ls.subscribe.delConfirm === sub.group_id ? '确认删除' : '删除' }}
+          </button>
+          <button v-if="ls.subscribe.delConfirm === sub.group_id" class="ls-btn-xs" @click="lsSubsDelCancel()">取消</button>
+        </td>
+      </tr>
+    </tbody>
+  </table>
+
+  <!-- 编辑浮层：除群ID / 订阅人ID 外均可改 -->
+  <div class="modal" v-if="ls.subscribe.editForm" @click.self="lsSubsEditCancel()">
+    <div class="modal-box">
+      <h3>编辑订阅</h3>
+      <p class="muted">群ID、订阅人ID 不可修改。</p>
+
+      <div class="row">
+        <label class="ls-field"><span>群ID</span><input class="ls-input" :value="ls.subscribe.editForm.group_id" disabled></label>
+        <label class="ls-field"><span>群名</span><input class="ls-input" v-model="ls.subscribe.editForm.group_name"></label>
+      </div>
+      <div class="row">
+        <label class="ls-field"><span>订阅人ID</span><input class="ls-input" :value="ls.subscribe.editForm.subscriber_id" disabled></label>
+        <label class="ls-field"><span>订阅人</span><input class="ls-input" v-model="ls.subscribe.editForm.subscriber_name"></label>
+      </div>
+      <div class="row">
+        <label class="ls-field"><span>推送间隔(分)</span>
+          <input class="ls-input" type="number" min="10" max="1440" v-model.number="ls.subscribe.editForm.interval_minutes"></label>
+        <label class="ls-field ls-check">
+          <input type="checkbox" v-model="ls.subscribe.editForm.enabled"> 启用（停用后不再主动推送）</label>
+      </div>
+
+      <div class="ls-field ls-field-wide">
+        <span>服务列表（勾选 = 该群订阅此服务）</span>
+        <table class="ls-table" style="margin-top:6px">
+          <thead>
+            <tr>
+              <th style="width:20%"></th>
+              <th v-for="t in ls.subscribe.serviceTypes" :key="t" style="text-align:center">{{ ls.subscribe.serviceLabels[t] }}</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="l in ls.subscribe.langs" :key="l.key">
+              <th>{{ l.label }}</th>
+              <td v-for="t in ls.subscribe.serviceTypes" :key="l.key + t" style="text-align:center">
+                <input type="checkbox" :checked="lsSubsHasServiceEdit(l.key, t)" @change="lsSubsToggleService(l.key, t)">
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="actions">
+        <button @click="lsSubsEditCancel()">取消</button>
+        <button class="ls-btn-primary" @click="lsSubsSave()">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 测试浮层：与编辑窗同布局，但服务矩阵里的勾选框改成「测试」按钮 -->
+  <div class="modal" v-if="ls.subscribe.testForm" @click.self="lsSubsTestCancel()">
+    <div class="modal-box">
+      <h3>测试订阅</h3>
+      <p class="muted">点击下方任意格子的「测试」按钮，即向该群发送一次对应功能的回复。</p>
+
+      <div class="row">
+        <label class="ls-field"><span>群ID</span><input class="ls-input" :value="ls.subscribe.testForm.group_id" disabled></label>
+        <label class="ls-field"><span>群名</span><input class="ls-input" :value="ls.subscribe.testForm.group_name || '—'" disabled></label>
+      </div>
+      <div class="row">
+        <label class="ls-field"><span>订阅人ID</span><input class="ls-input" :value="ls.subscribe.testForm.subscriber_id" disabled></label>
+        <label class="ls-field"><span>订阅人</span><input class="ls-input" :value="ls.subscribe.testForm.subscriber_name || '—'" disabled></label>
+      </div>
+      <div class="row">
+        <label class="ls-field"><span>推送间隔(分)</span>
+          <input class="ls-input" type="number" :value="ls.subscribe.testForm.interval_minutes" disabled></label>
+        <label class="ls-field ls-check">
+          <input type="checkbox" :checked="ls.subscribe.testForm.enabled" disabled> 启用状态</label>
+      </div>
+
+      <div class="ls-field ls-field-wide">
+        <span>服务列表（点击「测试」发送对应功能）</span>
+        <table class="ls-table" style="margin-top:6px">
+          <thead>
+            <tr>
+              <th style="width:20%"></th>
+              <th v-for="t in ls.subscribe.serviceTypes" :key="t" style="text-align:center">{{ ls.subscribe.serviceLabels[t] }}</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="l in ls.subscribe.langs" :key="l.key">
+              <th>{{ l.label }}</th>
+              <td v-for="t in ls.subscribe.serviceTypes" :key="l.key + t" style="text-align:center">
+                <button class="ls-btn-xs"
+                        :class="{ 'ls-btn-primary': ls.subscribe.testRunningKey !== l.key + '_' + t }"
+                        :disabled="!!ls.subscribe.testRunningKey"
+                        @click="lsSubsTestRun(l.key, t)">
+                  {{ ls.subscribe.testRunningKey === l.key + '_' + t ? '发送中…' : '测试' }}
+                </button>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="actions">
+        <button @click="lsSubsTestCancel()">关闭</button>
+      </div>
     </div>
   </div>
 </div>
@@ -1627,6 +1825,7 @@
   <script src="./js/frag/quiz.js"></script>
   <script src="./js/frag/news.js"></script>
   <script src="./js/frag/commands.js"></script>
+  <script src="./js/frag/subscribe.js"></script>
   <script src="./js/module.js"></script>
 </body>
 </html>

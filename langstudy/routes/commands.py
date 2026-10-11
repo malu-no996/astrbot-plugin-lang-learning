@@ -23,7 +23,7 @@ from .. import base, cmdconf, rules as rules_store
 from ..quiz import rules as quiz_rules
 from ..web import body, fail, ok, query
 
-_KINDS = ("menu", "push", "quiz")
+_KINDS = ("menu", "push", "quiz", "subscribe", "unsubscribe")
 
 
 def _targets_text(targets) -> str:
@@ -45,15 +45,18 @@ def _targets_text(targets) -> str:
 
 def _one(slot: str, kind: str, ident: str, label: str, desc: str, target: str,
          trigger: str, default: str, enabled: bool = True,
-         targets: dict | None = None) -> dict:
+         targets: dict | None = None, no_target: bool = False) -> dict:
     """一行命令。
 
     ⚠️ `trigger` 是**自己填过**的词（空 = 用默认），`effective` 才是实际生效的词
     —— 页面输入框绑 `trigger`，列表/查重看 `effective`。
 
-    `slot` = 这一行在**固定四行表**里的槽名（menu / vocab / grammar / quiz）：
-    页面的行 key、保存时的定位、以及「还没建规则时把词存哪儿」都靠它，
-    **不能拿 `id` 当行标识**（没规则的行 id 是空串，两行会撞 key）。
+    `slot` = 这一行在**固定表**里的槽名（menu / vocab / grammar / quiz /
+    subscribe_vocab / subscribe_grammar / … / unsubscribe_news）：
+    页面的行 key、保存时的定位都靠它，**不能拿 `id` 当行标识**（没规则的行 id 是空串）。
+
+    `no_target`：True = 这条命令没有「发到哪」概念（订阅 / 退订是群内命令，
+    自动作用于发命令的那个群），页面不显示「配置」按钮、也不报「没建规则」。
     """
     stored = str(trigger or "").strip()
     tgt = cmdconf.norm_cmd_targets(targets)
@@ -72,6 +75,7 @@ def _one(slot: str, kind: str, ident: str, label: str, desc: str, target: str,
         "default": default,
         "effective": stored or default,
         "custom": bool(stored),
+        "no_target": bool(no_target),
     }
 
 
@@ -134,6 +138,23 @@ def _commands_of(lang: str) -> list[dict]:
             "（还没建规则）",
             cmdconf.cmd_trigger_override(lang, "quiz"), q_default, False, {},
         ))
+
+    # 订阅 / 退订命令：每种语言固定 8 行（订阅单词/语法/答题/新闻 + 退订同 4 项）。
+    # 群内命令，自动作用于发命令的那个群，没有「发到哪」配置。触发词可在这一页改，
+    # 存 commands.json 的「语言 + 动作」槽，没填过 = 默认词「订阅/退订{语言}{服务}」。
+    for action in cmdconf.SUBS_ACTIONS:
+        act_label = "订阅" if action == "subscribe" else "退订"
+        for svc in cmdconf.SUBS_SLOTS:
+            slot = f"{action}_{svc}"
+            label = cmdconf.subs_default_trigger(action, lang, svc)
+            stored = cmdconf.subs_trigger_override(action, lang, svc)
+            default = cmdconf.subs_default_trigger(action, lang, svc)
+            out.append(_one(
+                slot, action, "", label,
+                f"{act_label}{base.kind_label(svc)}服务（群内命令，自动作用于当前群）",
+                "（群内命令 · 自动作用于当前群）",
+                stored, default, True, {}, no_target=True,
+            ))
     return out
 
 
@@ -190,6 +211,18 @@ async def api_commands_save():
     if kind == "menu":
         try:
             cmdconf.set_menu_trigger(lang, trigger)
+        except ValueError as exc:
+            return fail(str(exc))
+    elif kind in ("subscribe", "unsubscribe"):
+        # 订阅 / 退订：没有规则，只存 commands.json 的「语言 + 动作」槽（按服务类型分槽）
+        slot = str(payload.get("slot") or "").strip().lower()
+        if "_" not in slot:
+            return fail("命令类型不对")
+        svc = slot.split("_", 1)[1]
+        if svc not in cmdconf.SUBS_SLOTS:
+            return fail("服务类型不对")
+        try:
+            cmdconf.set_subs_trigger_override(kind, lang, svc, trigger)
         except ValueError as exc:
             return fail(str(exc))
     else:

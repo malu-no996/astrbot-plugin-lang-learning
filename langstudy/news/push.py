@@ -14,6 +14,7 @@ from loguru import logger
 
 from .. import base, paths, platforms, schedule, sender
 from ..paths import NEWS_DIR
+from .image import render_news_image
 from .sources import (
     FIRST_DELAY,
     SOURCES,
@@ -23,6 +24,10 @@ from .sources import (
     get_source_cfg,
     load_cache,
 )
+
+# 这些语言的新闻直接发**文字**（不走图片渲染）：其文字字形不在本机渲染字体
+# （微软雅黑）里，强行出图会变成方框。聊天客户端本身有该语言字体，发文字更稳。
+TEXT_ONLY_LANGS = {"th"}
 
 PUSH_FILE = NEWS_DIR / "news_push.json"
 # ---------------- 新闻推送规则（news_push.json） ----------------
@@ -40,7 +45,7 @@ DEFAULT_NEWS_RULE = {
     "times": ["08:00"],
     "jitter_minutes": 15,
     "interval_minutes": 120,
-    "count": 5,
+    "count": 1,
     "categories": [],                # 推送端额外过滤（空 = 已采集的全部）
     "with_body": True,               # 推送时抓正文显示（不开则只发标题+链接）
     "next_run_at": 0,
@@ -129,26 +134,71 @@ def news_due(now: float | None = None) -> list[dict]:
     return out
 
 
-def _news_render(rule: dict, items: list[dict], bodies: dict[str, str] | None = None) -> str:
-    """把挑出来的新闻拼成可发的纯文本（OneBot 与官方机器人都能读）。
+NEWS_BODY_MAX = 300            # 单条新闻正文截断上限（字符），避免一条消息过长
 
-    bodies: {item_id: 正文}。有正文时显示正文（不显示链接）；无正文（视频新闻 /
-    抓取失败）回退到链接，保证消息不空。
+
+def render_news_item(source_name: str, item: dict, body: str | None = None) -> str:
+    """单条新闻渲染成一段短文本（**一条消息发一条**，正文超长截断）。
+
+    body: 该条新闻的正文（None = 没抓到 / 不开 with_body）→ 回退到链接，
+    保证消息不空、且链接可点。
     """
-    name = SOURCES.get(rule.get("source"), {}).get("name", "新闻")
-    lines = [f"【{name}】", ""]
-    for idx, it in enumerate(items, 1):
-        cat = it.get("category_label") or it.get("category") or ""
-        line = f"{idx}. [{cat}] {it.get('title', '')}"
+    cat = item.get("category_label") or item.get("category") or ""
+    title = str(item.get("title", "")).strip()
+    head = f"【{source_name}】"
+    if cat:
+        head += f"[{cat}] "
+    head += title
+    if body:
+        body = str(body).strip()
+        if len(body) > NEWS_BODY_MAX:
+            body = body[:NEWS_BODY_MAX].rstrip() + "…"
+        return f"{head}\n{body}"
+    link = item.get("link") or ""
+    return f"{head}\n{link}" if link else head
+
+
+async def send_news_items(rule: dict, items: list[dict], bodies: dict[str, str] | None,
+                          pid: str, target_type: str, tid: str,
+                          reply_msg_id: str | None = None) -> dict:
+    """把挑出来的新闻**逐条**发出去（一条新闻 = 一条消息）。
+
+    - 泰语等 `TEXT_ONLY_LANGS` 里的语言 → 直接发**文字**（标题 + 正文 + 链接），
+      聊天客户端有该语言字体，比出图（无字形→方框）更稳。
+    - 其它语言 → 渲染成**图片**发出。
+
+    返回 `{ok: 成功条数, sent_ids: [成功发出的 item id]}` —— 部分失败也继续，
+    调用方据此记录去重。每条之间留 0.6s，避免官方机器人瞬时连发被限频/乱序。
+    """
+    source_name = SOURCES.get(rule.get("source"), {}).get("name", "新闻")
+    src_lang = SOURCES.get(rule.get("source"), {}).get("lang", "")
+    use_text = src_lang in TEXT_ONLY_LANGS
+    sent_ids: list[str] = []
+    ok = 0
+    first_err: str = ""
+    for it in items:
         body = (bodies or {}).get(it.get("id")) if rule.get("with_body") else None
-        if body:
-            line += f"\n{body}"
-        else:
-            link = it.get("link") or ""
-            if link:
-                line += f"\n   {link}"
-        lines.append(line)
-    return "\n".join(lines).strip() + "\n"
+        try:
+            if use_text:
+                text = render_news_item(source_name, it, body)
+                # 泰语等小众文字在官方 markdown 渲染器上容易报错，直接走纯文本
+                await sender.send_text(pid, target_type, tid, text,
+                                       reply_msg_id=reply_msg_id, raw=True)
+            else:
+                img = render_news_image(source_name, it, body)
+                await sender.send_image(pid, target_type, tid, img, reply_msg_id=reply_msg_id)
+            ok += 1
+            sent_ids.append(it.get("id"))
+            await asyncio.sleep(0.6)
+        except Exception as exc:  # noqa: BLE001
+            err = f"{type(exc).__name__}: {exc}"
+            if not first_err:
+                first_err = err
+            logger.warning(f"外语学习：新闻{'文字' if use_text else '图片'}发送失败：{err}")
+            logger.exception(f"外语学习：新闻{'文字' if use_text else '图片'}发送失败详情")
+    if first_err and ok == 0:
+        return {"ok": ok, "sent_ids": sent_ids, "error": first_err}
+    return {"ok": ok, "sent_ids": sent_ids}
 
 
 async def news_run_rule(rule_id: str, source: str = "auto", rule: dict | None = None) -> dict:
@@ -181,27 +231,25 @@ async def news_run_rule(rule_id: str, source: str = "auto", rule: dict | None = 
     # 按需并发抓正文（每条一次 HTTP，线程池里跑，不卡事件循环）
     bodies: dict[str, str] = {}
     if rule.get("with_body"):
-        src = SOURCES.get(sid) or {}
-        if callable(src.get("body")):
-            async def _one(it):
-                try:
-                    bodies[it["id"]] = await asyncio.to_thread(fetch_body, sid, it.get("link") or "")
-                except Exception as exc:
-                    logger.warning(f"新闻正文抓取异常（{sid}）：{exc}")
-                    bodies[it["id"]] = ""
-            await asyncio.gather(*[_one(it) for it in pick])
+        async def _one(it):
+            try:
+                bodies[it["id"]] = await asyncio.to_thread(fetch_body, sid, it.get("link") or "")
+            except Exception as exc:
+                logger.warning(f"新闻正文抓取异常（{sid}）：{exc}")
+                bodies[it["id"]] = ""
+        await asyncio.gather(*[_one(it) for it in pick])
 
-    text = _news_render(rule, pick, bodies)
-    try:
-        await sender.send_text(pid, rule.get("target_type"), tid, text)
-    except Exception as exc:
-        logger.warning(f"新闻推送发送失败（{sid}）：{exc}")
-        return _finish_news_rule(rule, f"发送失败：{exc}", ok=False)
-
-    now = time.time()
-    new_sent = (list(rule.get("sent_ids") or []) + [x.get("id") for x in pick])[-300:]
+    res = await send_news_items(rule, pick, bodies, pid, rule.get("target_type"), tid)
+    if res["ok"] == 0:
+        err = res.get("error") or "未知错误"
+        msg = f"新闻发送失败（全部条目都未发出）：{err}"
+        hint = sender.permission_hint(err)
+        if hint:
+            msg += hint
+        return _finish_news_rule(rule, msg, ok=False)
+    new_sent = (list(rule.get("sent_ids") or []) + res["sent_ids"])[-300:]
     rule["sent_ids"] = new_sent
-    return _finish_news_rule(rule, f"{source} 推送 {len(pick)} 条成功", ok=True, now=now)
+    return _finish_news_rule(rule, f"{source} 推送 {res['ok']}/{len(pick)} 条成功", ok=True)
 
 
 def _finish_news_rule(rule: dict, msg: str, ok: bool, now: float | None = None) -> dict:

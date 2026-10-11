@@ -42,6 +42,13 @@ from .base import atomic_write, norm_trigger
 CMD_KINDS_KEY = "kinds"
 CMD_SLOTS = ("vocab", "grammar", "quiz")     # 命令配置页除「菜单」外的三个槽
 
+# 订阅 / 退订命令（「订阅X语YY」/「退订X语YY」）的槽：动作 × 服务类型
+SUBS_ACTIONS = ("subscribe", "unsubscribe")  # subscribe=订阅 / unsubscribe=退订
+SUBS_SLOTS = ("vocab", "grammar", "quiz", "news")   # 订阅命令按「服务类型」分槽
+SUBS_PREFIXES = {"subscribe": "订阅", "unsubscribe": "退订"}
+# 服务类型中文名（base.KIND_LABELS 只有 vocab/语法，quiz/news 不在这里，订阅命令要单独列）
+SUBS_SVC_LABELS = {"vocab": "单词", "grammar": "语法", "quiz": "答题", "news": "新闻"}
+
 CMD_TARGET_MAX = 20               # 最多配几条「机器人 → 发到哪」记录
 CMD_SCOPES = ("any", "none", "some")
 CMD_SCOPE_LABELS = {"any": "任何群可用", "none": "全部禁用", "some": "选中的群可用"}
@@ -52,11 +59,6 @@ _lock = threading.Lock()
 def default_menu_trigger(lang: str) -> str:
     """「学习菜单」命令的默认触发词。"""
     return f"{base.lang_label(lang)}{base.MENU_SUFFIX}"
-
-
-def default_short_menu_trigger(lang: str) -> str:
-    """「菜单」简版命令的默认触发词，如「日语菜单」（与「学习菜单」并存，复用同一菜单逻辑）。"""
-    return f"{base.lang_label(lang)}{base.MENU_SHORT_SUFFIX}"
 
 
 # ---------------- 语言级：菜单触发词 ----------------
@@ -132,6 +134,70 @@ def set_cmd_trigger_override(lang: str, slot: str, trigger) -> str:
         ent[CMD_KINDS_KEY] = kinds
     else:
         ent.pop(CMD_KINDS_KEY, None)
+    data[key] = ent
+    with _lock:
+        atomic_write(base.COMMANDS_FILE, data)
+    base._cmd_invalidate()
+    return val
+
+
+# ---------------- 订阅 / 退订命令触发词（「订阅X语YY」/「退订X语YY」） ----------------
+# 「X语」= 四种语言；「YY」= 单词/语法/答题/新闻（SUBS_SLOTS）。
+# 存法：commands.json 每语言配置里加 `"subscribe": {svc: 词}` / `"unsubscribe": {svc: 词}`，
+# 没填过 = 用默认词「订阅{语言}{服务}」/「退订{语言}{服务}」。
+
+
+def subs_default_trigger(action: str, lang: str, svc: str) -> str:
+    """订阅 / 退订命令的默认触发词，如「订阅日语单词」「退订英语语法」。"""
+    pre = SUBS_PREFIXES.get(str(action or "").strip(), SUBS_PREFIXES["subscribe"])
+    return f"{pre}{base.lang_label(lang)}{SUBS_SVC_LABELS.get(str(svc or ''), str(svc or ''))}"
+
+
+def subs_trigger_override(action: str, lang: str, svc: str) -> str:
+    """这个「动作 + 语言 + 服务类型」在命令配置页填过的词（没填过返回空串）。"""
+    if str(action or "").strip() not in SUBS_ACTIONS:
+        return ""
+    if str(svc or "").strip() not in SUBS_SLOTS:
+        return ""
+    ent = base.load_commands().get(base.norm_lang(lang))
+    if not isinstance(ent, dict):
+        return ""
+    sub = ent.get(str(action))
+    if not isinstance(sub, dict):
+        return ""
+    return str(sub.get(str(svc)) or "").strip()
+
+
+def subs_effective_trigger(action: str, lang: str, svc: str) -> str:
+    """实际生效的订阅 / 退订触发词：自己填过用填的，留空 = 默认词。"""
+    return subs_trigger_override(action, lang, svc) or subs_default_trigger(action, lang, svc)
+
+
+def set_subs_trigger_override(action: str, lang: str, svc: str, trigger) -> str:
+    """写订阅 / 退订触发词（空串 = 恢复默认词，顺手把那个槽删掉，别留空壳）；返回写进去的值。"""
+    a = str(action or "").strip()
+    if a not in SUBS_ACTIONS:
+        raise ValueError("动作不对（只能是 subscribe / unsubscribe）")
+    key = base.norm_lang(lang)
+    if not key:
+        raise ValueError("语言不对")
+    svc = str(svc or "").strip()
+    if svc not in SUBS_SLOTS:
+        raise ValueError("服务类型不对")
+    data = base.load_commands()
+    ent = data.get(key)
+    ent = dict(ent) if isinstance(ent, dict) else {}
+    sub = ent.get(a)
+    sub = dict(sub) if isinstance(sub, dict) else {}
+    val = norm_trigger(trigger)
+    if val:
+        sub[svc] = val
+    else:
+        sub.pop(svc, None)
+    if sub:
+        ent[a] = sub
+    else:
+        ent.pop(a, None)
     data[key] = ent
     with _lock:
         atomic_write(base.COMMANDS_FILE, data)

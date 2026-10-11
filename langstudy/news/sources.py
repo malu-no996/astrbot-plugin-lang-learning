@@ -122,6 +122,109 @@ NHK_RSS = "https://www3.nhk.or.jp/rss/news/{cat}.xml"
 YAHOO_RSS = "https://news.yahoo.co.jp/rss/topics/{cat}.xml"
 NEWS_UA = "Mozilla/5.0 (compatible; langstudy-news/1.0)"
 
+# ---------------- 新增语言新闻源（英语 / 韩语 / 泰语） ----------------
+# 选源原则：**正文要能拿到**（用户要求新闻带正文图片），所以优先选「正文页是普通
+# HTML、可直接抓取」或「RSS 自带全文（WordPress content:encoded）」的媒体；
+# 不选纯聚合、正文抓不到的源。每个源默认开启；本机若直连不了（被墙），采集会安全
+# 返回空，不崩溃，页面上能看到「最后采集失败」，需要时给来源配代理即可。
+#
+#   - 英语  bbc_en ：BBC News，标准 RSS；文章正文在 data-component="text-block" 块内。
+#   - 韩语  daum_ko ：Daum News，标准 RSS；文章正文在 #harmonyContainer。
+#   - 泰语  khaosod_th ：Khaosod（WordPress），RSS 自带 content:encoded 全文，
+#                        采集时即落库到 item["body"]，推送直接复用，无需再抓网页。
+
+# 英语：BBC News
+BBC_RSS = "http://feeds.bbci.co.uk/news/{cat}/rss.xml"
+BBC_CATEGORIES = [
+    ("world", "国际"),
+    ("uk", "英国"),
+    ("business", "商业"),
+    ("politics", "政治"),
+    ("health", "健康"),
+    ("education", "教育"),
+    ("science_and_environment", "科学·环境"),
+    ("technology", "科技"),
+    ("entertainment_and_arts", "娱乐"),
+    ("sport", "体育"),
+]
+
+# 韩语：Daum News
+DAUM_RSS = "https://v.daum.net/rss/{cat}.xml"
+DAUM_CATEGORIES = [
+    ("news", "综合"),
+    ("society", "社会"),
+    ("politics", "政治"),
+    ("economic", "经济"),
+    ("foreign", "国际"),
+    ("culture", "文化"),
+    ("sport", "体育"),
+    ("tech", "科技"),
+]
+
+# 泰语：Khaosod（WordPress，RSS 自带全文）
+KHAOSOD_FEED = "https://www.khaosod.co.th/feed/"
+KHAOSOD_CATEGORIES = [
+    ("news", "综合"),
+]
+CONTENT_NS = "{http://purl.org/rss/1.0/modules/content/}"
+
+# ---------------- 备用新闻源（每种语言多备几条，互相兜底） ----------------
+# 设计：每个语言在「默认源」之外再备 2 条可靠来源；订阅推送时启用源依次兜底——
+# 主源采集为空/不可达时自动顺延到下一个启用源（见 subs._send_news）。
+# 正文策略：
+#   - WordPress 类（content:encoded 自带全文）：采集即落库 body，无需抓网页
+#     （khaosod_th / matichon_th / standard_th）；
+#   - 其它（RSS2 / RDF）：提供通用网页正文抽取（_make_generic_body），尽力而为。
+# 全部默认开启；本机若直连不了（被墙）采集会安全返回空、页面显示「最后采集失败」，
+# 需要时给来源配代理（来源配置 proxy 或环境变量 LANGSTUDY_NEWS_PROXY）即可。
+
+# 日语：朝日新聞（RDF）
+ASAHI_RSS = "https://www.asahi.com/rss/{cat}.rdf"
+ASAHI_CATEGORIES = [
+    ("asahi_news", "主要"),
+    ("news_society", "社会"),
+    ("news_politics", "政治"),
+    ("news_business", "经济"),
+    ("news_international", "国际"),
+    ("news_sports", "体育"),
+    ("news_culture", "文化"),
+    ("news_life", "生活·教育"),
+    ("news_digital", "数字"),
+]
+# 日语：日本経済新聞（RDF）
+NIKKEI_RSS = "https://www.nikkei.com/rss/{cat}.rdf"
+NIKKEI_CATEGORIES = [
+    ("news", "综合"),
+    ("world", "国际"),
+    ("business", "经济"),
+    ("markets", "市场"),
+    ("politics", "政治"),
+]
+# 英语：The Guardian（RSS2）
+GUARDIAN_RSS = "https://www.theguardian.com/{cat}/rss"
+GUARDIAN_CATEGORIES = [
+    ("world", "国际"),
+    ("uk", "英国"),
+    ("business", "商业"),
+    ("politics", "政治"),
+    ("technology", "科技"),
+    ("science", "科学"),
+    ("environment", "环境"),
+    ("culture", "文化"),
+    ("sport", "体育"),
+    ("lifeandstyle", "生活"),
+]
+# 英语：Al Jazeera（RSS2，单一综合流，国际新闻为主，国内通常可达）
+ALJAZEERA_FEED = "https://www.aljazeera.com/xml/rss/all.xml"
+# 韩语：연합뉴스 Yonhap（RSS2，单一综合流，韩国最大通讯社）
+YONHAP_FEED = "https://www.yna.co.kr/rss/news.xml"
+# 韩语：조선일보 Chosun（RSS2，单一综合流，主流大报）
+CHOSUN_FEED = "https://www.chosun.com/site/data/rss/rss.xml"
+# 泰语：มติชน Matichon（WordPress，content:encoded 全文）
+MATICHON_FEED = "http://www.matichon.co.th/feed/"
+# 泰语：The Standard（เดอะสแตนดาร์ด，WordPress，content:encoded 全文）
+STANDARD_FEED = "https://thestandard.co/feed/"
+
 
 # ---------------- 来源注册表（新增媒体 = 往这里加一项） ----------------
 # 每项字段：
@@ -301,6 +404,281 @@ def _collect_yahoo(cat_id: str) -> list[dict]:
     return items
 
 
+# ---------------- 英语 / 韩语 / 泰语 采集实现 ----------------
+def _collect_bbc(cat_id: str) -> list[dict]:
+    """抓单个 BBC 分类 RSS，返回条目。"""
+    url = BBC_RSS.format(cat=cat_id)
+    label = dict(BBC_CATEGORIES).get(cat_id, cat_id)
+    raw = _http_get(url, timeout=15, proxy=_source_proxy("bbc_en"))
+    if raw is None:
+        return []
+    try:
+        root = ET.fromstring(raw)
+    except ET.ParseError as exc:
+        logger.warning(f"BBC 新闻解析失败（{cat_id}）：{exc}")
+        return []
+    items: list[dict] = []
+    for it in root.iter("item"):
+        link = _elem_text(it, "link")
+        title = _elem_text(it, "title")
+        if not link or not title:
+            continue
+        link = link.split("?")[0]
+        date_txt = _elem_text(it, "pubDate") or _elem_text(it, f"{DC_NS}date")
+        items.append({
+            "id": link,
+            "source": "bbc_en",
+            "category": cat_id,
+            "category_label": label,
+            "title": title[:TITLE_KEEP],
+            "summary": _strip_html(_elem_text(it, "description"))[:SUMMARY_KEEP],
+            "link": link,
+            "published": _parse_date(date_txt),
+        })
+    return items
+
+
+def _bbc_body(link: str, limit: int = BODY_KEEP) -> str:
+    """抓 BBC 文章正文：从所有 data-component="text-block" 块抽 <p> 文本。"""
+    proxy = _source_proxy("bbc_en")
+    raw = _http_get(link, timeout=BODY_FETCH_TIMEOUT, proxy=proxy)
+    if not raw:
+        return ""
+    page = raw.decode("utf-8", "replace")
+    paras: list[str] = []
+    for m in re.finditer(r'<div\b[^>]*data-component="text-block"[^>]*>', page, re.I):
+        paras.extend(_blocks_from_seg(_slice_balanced(page, m)))
+    if not paras:
+        paras = _blocks_from_seg(_extract_article(page))
+    return _join_blocks(paras, drop_ui=False, limit=limit)
+
+
+def _collect_daum(cat_id: str) -> list[dict]:
+    """抓单个 Daum 分类 RSS，返回条目。"""
+    url = DAUM_RSS.format(cat=cat_id)
+    label = dict(DAUM_CATEGORIES).get(cat_id, cat_id)
+    raw = _http_get(url, timeout=15, proxy=_source_proxy("daum_ko"))
+    if raw is None:
+        return []
+    try:
+        root = ET.fromstring(raw)
+    except ET.ParseError as exc:
+        logger.warning(f"Daum 新闻解析失败（{cat_id}）：{exc}")
+        return []
+    items: list[dict] = []
+    for it in root.iter("item"):
+        link = _elem_text(it, "link")
+        title = _elem_text(it, "title")
+        if not link or not title:
+            continue
+        link = link.split("?")[0]
+        date_txt = _elem_text(it, "pubDate") or _elem_text(it, f"{DC_NS}date")
+        items.append({
+            "id": link,
+            "source": "daum_ko",
+            "category": cat_id,
+            "category_label": label,
+            "title": title[:TITLE_KEEP],
+            "summary": _strip_html(_elem_text(it, "description"))[:SUMMARY_KEEP],
+            "link": link,
+            "published": _parse_date(date_txt),
+        })
+    return items
+
+
+def _daum_body(link: str, limit: int = BODY_KEEP) -> str:
+    """抓 Daum 文章正文：从 #harmonyContainer 抽文本（抓不到回退首个 <article>）。"""
+    proxy = _source_proxy("daum_ko")
+    raw = _http_get(link, timeout=BODY_FETCH_TIMEOUT, proxy=proxy)
+    if not raw:
+        return ""
+    page = raw.decode("utf-8", "replace")
+    m = re.search(r'<div\b[^>]*id="harmonyContainer"[^>]*>', page, re.I)
+    seg = _slice_balanced(page, m) if m else _extract_article(page)
+    return _join_blocks(_blocks_from_seg(seg), drop_ui=False, limit=limit)
+
+
+def _collect_khaosod(cat_id: str) -> list[dict]:
+    """抓 Khaosod（WordPress）综合 feed；RSS 自带 content:encoded 全文，落库到 body。"""
+    url = KHAOSOD_FEED
+    label = dict(KHAOSOD_CATEGORIES).get(cat_id, cat_id)
+    raw = _http_get(url, timeout=20, proxy=_source_proxy("khaosod_th"))
+    if raw is None:
+        return []
+    try:
+        root = ET.fromstring(raw)
+    except ET.ParseError as exc:
+        logger.warning(f"Khaosod 新闻解析失败：{exc}")
+        return []
+    items: list[dict] = []
+    for it in root.iter("item"):
+        link = _elem_text(it, "link")
+        title = _elem_text(it, "title")
+        if not link or not title:
+            continue
+        link = link.split("?")[0]
+        enc = it.find(f"{CONTENT_NS}encoded")
+        full = (enc.text or "") if enc is not None else ""
+        if not full:
+            full = _elem_text(it, "description")
+        body = _strip_html(full)[:BODY_KEEP]
+        date_txt = _elem_text(it, "pubDate") or _elem_text(it, f"{DC_NS}date")
+        items.append({
+            "id": link,
+            "source": "khaosod_th",
+            "category": cat_id,
+            "category_label": label,
+            "title": title[:TITLE_KEEP],
+            "summary": "",
+            "body": body,
+            "link": link,
+            "published": _parse_date(date_txt),
+        })
+    return items
+
+
+def _register_bbc() -> None:
+    def bbc_categories():
+        return list(BBC_CATEGORIES)
+    SOURCES["bbc_en"] = {
+        "id": "bbc_en",
+        "name": "BBC News（英语）",
+        "lang": "en",
+        "optional": False,
+        "default_enabled": True,
+        "categories": bbc_categories,
+        "collect": _collect_bbc,
+        "body": _bbc_body,
+    }
+
+
+def _register_daum() -> None:
+    def daum_categories():
+        return list(DAUM_CATEGORIES)
+    SOURCES["daum_ko"] = {
+        "id": "daum_ko",
+        "name": "Daum News（韩语）",
+        "lang": "ko",
+        "optional": False,
+        "default_enabled": True,
+        "categories": daum_categories,
+        "collect": _collect_daum,
+        "body": _daum_body,
+    }
+
+
+def _register_khaosod() -> None:
+    def khaosod_categories():
+        return list(KHAOSOD_CATEGORIES)
+    SOURCES["khaosod_th"] = {
+        "id": "khaosod_th",
+        "name": "Khaosod（泰语）",
+        "lang": "th",
+        "optional": False,
+        "default_enabled": True,
+        "categories": khaosod_categories,
+        "collect": _collect_khaosod,
+        # 泰语源 RSS 自带全文，正文在采集时已落库到 item["body"]；
+        # fetch_body 对无 body 函数的源会自动回退到缓存里的 item body，无需单独实现。
+    }
+
+
+# ---------------- 备用源注册（日语 / 英语 / 韩语 / 泰语 各 +2） ----------------
+def _register_asahi() -> None:
+    def asahi_categories():
+        return list(ASAHI_CATEGORIES)
+    SOURCES["asahi_ja"] = {
+        "id": "asahi_ja", "name": "朝日新聞（日语）", "lang": "ja",
+        "optional": False, "default_enabled": True,
+        "categories": asahi_categories,
+        "collect": _collect_rdf("asahi_ja", ASAHI_RSS, dict(ASAHI_CATEGORIES).get),
+        "body": _make_generic_body("asahi_ja"),
+    }
+
+
+def _register_nikkei() -> None:
+    def nikkei_categories():
+        return list(NIKKEI_CATEGORIES)
+    SOURCES["nikkei_ja"] = {
+        "id": "nikkei_ja", "name": "日本経済新聞（日语）", "lang": "ja",
+        "optional": False, "default_enabled": True,
+        "categories": nikkei_categories,
+        "collect": _collect_rdf("nikkei_ja", NIKKEI_RSS, dict(NIKKEI_CATEGORIES).get),
+        "body": _make_generic_body("nikkei_ja"),
+    }
+
+
+def _register_guardian() -> None:
+    def guardian_categories():
+        return list(GUARDIAN_CATEGORIES)
+    SOURCES["guardian_en"] = {
+        "id": "guardian_en", "name": "The Guardian（英语）", "lang": "en",
+        "optional": False, "default_enabled": True,
+        "categories": guardian_categories,
+        "collect": _collect_rss2("guardian_en", GUARDIAN_RSS, dict(GUARDIAN_CATEGORIES).get),
+        "body": _make_generic_body("guardian_en"),
+    }
+
+
+def _register_aljazeera() -> None:
+    def aljazeera_categories():
+        return [("all", "综合")]
+    SOURCES["aljazeera_en"] = {
+        "id": "aljazeera_en", "name": "Al Jazeera（英语）", "lang": "en",
+        "optional": False, "default_enabled": True,
+        "categories": aljazeera_categories,
+        "collect": _collect_rss2("aljazeera_en", ALJAZEERA_FEED, lambda c: "综合"),
+        "body": _make_generic_body("aljazeera_en"),
+    }
+
+
+def _register_yonhap() -> None:
+    def yonhap_categories():
+        return [("all", "综合")]
+    SOURCES["yonhap_ko"] = {
+        "id": "yonhap_ko", "name": "연합뉴스 Yonhap（韩语）", "lang": "ko",
+        "optional": False, "default_enabled": True,
+        "categories": yonhap_categories,
+        "collect": _collect_rss2("yonhap_ko", YONHAP_FEED, lambda c: "综合"),
+        "body": _make_generic_body("yonhap_ko"),
+    }
+
+
+def _register_chosun() -> None:
+    def chosun_categories():
+        return [("all", "综合")]
+    SOURCES["chosun_ko"] = {
+        "id": "chosun_ko", "name": "조선일보 Chosun（韩语）", "lang": "ko",
+        "optional": False, "default_enabled": True,
+        "categories": chosun_categories,
+        "collect": _collect_rss2("chosun_ko", CHOSUN_FEED, lambda c: "综合"),
+        "body": _make_generic_body("chosun_ko"),
+    }
+
+
+def _register_matichon() -> None:
+    def matichon_categories():
+        return [("all", "综合")]
+    SOURCES["matichon_th"] = {
+        "id": "matichon_th", "name": "มติชน Matichon（泰语）", "lang": "th",
+        "optional": False, "default_enabled": True,
+        "categories": matichon_categories,
+        "collect": _collect_wordpress("matichon_th", MATICHON_FEED, "综合"),
+        # WordPress 全文源：正文在采集时已落库，fetch_body 自动回退缓存 body。
+    }
+
+
+def _register_standard() -> None:
+    def standard_categories():
+        return [("all", "综合")]
+    SOURCES["standard_th"] = {
+        "id": "standard_th", "name": "The Standard（泰语）", "lang": "th",
+        "optional": False, "default_enabled": True,
+        "categories": standard_categories,
+        "collect": _collect_wordpress("standard_th", STANDARD_FEED, "综合"),
+    }
+
+
 # ---------------- 正文抓取（预览/推送用，可扩展） ----------------
 # 每条新闻在采集时只存标题/链接，正文按需抓取：预览按钮、推送时各抓一次。
 # 来源注册表可带 "body" 函数 (link) -> 纯文本；没有则回退链接。
@@ -429,17 +807,157 @@ def _yahoo_body(link: str, limit: int = BODY_KEEP) -> str:
     return _join_blocks(_blocks_from_seg(seg), drop_ui=True, limit=limit)
 
 
-def fetch_body(sid: str, link: str, limit: int = BODY_KEEP) -> str:
-    """按来源取正文；来源未提供 body 实现则回退空串（调用方再决定回退链接）。"""
+def fetch_body(sid: str, link: str, limit: int = BODY_KEEP, item: dict | None = None) -> str:
+    """按来源取正文。
+
+    - 来源提供 body 实现（BBC/Daum）：实时抓网页正文；
+    - 否则：优先用传入 item 的缓存正文，再从本源缓存按 id 找（泰语 WordPress 全文源
+      走这条，正文在采集时已落库到 item["body"]）；都找不到回退空串（调用方回退链接）。
+    """
     src = SOURCES.get(sid) or {}
     body_fn = src.get("body")
-    if not callable(body_fn) or not link:
-        return ""
-    try:
-        return body_fn(link, limit)
-    except Exception as exc:
-        logger.warning(f"新闻正文抓取失败（{sid}）：{exc}")
-        return ""
+    if callable(body_fn) and link:
+        try:
+            return body_fn(link, limit)
+        except Exception as exc:
+            logger.warning(f"新闻正文抓取失败（{sid}）：{exc}")
+            return ""
+    if isinstance(item, dict) and item.get("body"):
+        return item["body"][:limit] if limit else item["body"]
+    if link:
+        for it in (load_cache(sid).get("items") or []):
+            if it.get("id") == link and it.get("body"):
+                return it["body"][:limit] if limit else it["body"]
+    return ""
+
+
+# ---------------- 通用采集器（避免每个源重复样板） ----------------
+def _collect_rss2(sid: str, url_template: str, label_fn, strip_query: bool = True):
+    """标准 RSS 2.0 采集：从 <item> 取 title/link/pubDate/description。"""
+    def _collect(cat_id: str) -> list[dict]:
+        url = url_template.format(cat=cat_id)
+        label = label_fn(cat_id)
+        raw = _http_get(url, timeout=15, proxy=_source_proxy(sid))
+        if raw is None:
+            return []
+        try:
+            root = ET.fromstring(raw)
+        except ET.ParseError as exc:
+            logger.warning(f"RSS 解析失败（{sid}/{cat_id}）：{exc}")
+            return []
+        items: list[dict] = []
+        for it in root.iter("item"):
+            link = _elem_text(it, "link")
+            title = _elem_text(it, "title")
+            if not link or not title:
+                continue
+            if strip_query:
+                link = link.split("?")[0]
+            date_txt = _elem_text(it, "pubDate") or _elem_text(it, f"{DC_NS}date")
+            items.append({
+                "id": link, "source": sid, "category": cat_id, "category_label": label,
+                "title": title[:TITLE_KEEP],
+                "summary": _strip_html(_elem_text(it, "description"))[:SUMMARY_KEEP],
+                "link": link, "published": _parse_date(date_txt),
+            })
+        return items
+    return _collect
+
+
+def _collect_rdf(sid: str, url_template: str, label_fn):
+    """RSS 1.0/RDF 采集（朝日/日经等），取 dc:date。"""
+    def _collect(cat_id: str) -> list[dict]:
+        url = url_template.format(cat=cat_id)
+        label = label_fn(cat_id)
+        raw = _http_get(url, timeout=20, proxy=_source_proxy(sid))
+        if raw is None:
+            return []
+        try:
+            root = ET.fromstring(raw)
+        except ET.ParseError as exc:
+            logger.warning(f"RDF 解析失败（{sid}/{cat_id}）：{exc}")
+            return []
+        items: list[dict] = []
+        for it in root.iter("item"):
+            link = _elem_text(it, "link")
+            title = _elem_text(it, "title")
+            if not link or not title:
+                continue
+            link = link.split("?")[0]
+            date_txt = _elem_text(it, f"{DC_NS}date") or _elem_text(it, "pubDate") or _elem_text(it, "date")
+            items.append({
+                "id": link, "source": sid, "category": cat_id, "category_label": label,
+                "title": title[:TITLE_KEEP],
+                "summary": _strip_html(_elem_text(it, "description"))[:SUMMARY_KEEP],
+                "link": link, "published": _parse_date(date_txt),
+            })
+        return items
+    return _collect
+
+
+def _collect_wordpress(sid: str, feed_url: str, label: str):
+    """WordPress 源（content:encoded 自带全文）：采集即把正文落库到 item["body"]。"""
+    def _collect(cat_id: str) -> list[dict]:
+        raw = _http_get(feed_url, timeout=20, proxy=_source_proxy(sid))
+        if raw is None:
+            return []
+        try:
+            root = ET.fromstring(raw)
+        except ET.ParseError as exc:
+            logger.warning(f"WordPress 解析失败（{sid}）：{exc}")
+            return []
+        items: list[dict] = []
+        for it in root.iter("item"):
+            link = _elem_text(it, "link")
+            title = _elem_text(it, "title")
+            if not link or not title:
+                continue
+            link = link.split("?")[0]
+            enc = it.find(f"{CONTENT_NS}encoded")
+            full = (enc.text or "") if enc is not None else ""
+            if not full:
+                full = _elem_text(it, "description")
+            body = _strip_html(full)[:BODY_KEEP]
+            date_txt = _elem_text(it, "pubDate") or _elem_text(it, f"{DC_NS}date")
+            items.append({
+                "id": link, "source": sid, "category": cat_id, "category_label": label,
+                "title": title[:TITLE_KEEP], "summary": "",
+                "body": body, "link": link, "published": _parse_date(date_txt),
+            })
+        return items
+    return _collect
+
+
+def _generic_article_seg(page: str) -> str:
+    """通用正文片段定位：优先 <article> / <main>，再常见正文容器 class；找不到返回空串。"""
+    pats = [
+        r'<article\b[^>]*>',
+        r'<main\b[^>]*>',
+        r'<div\b[^>]*class="[^"]*article[_-]?body[^"]*"[^>]*>',
+        r'<div\b[^>]*class="[^"]*post[_-]?content[^"]*"[^>]*>',
+        r'<div\b[^>]*id="content"[^>]*>',
+        r'<div\b[^>]*class="[^"]*content[^"]*"[^>]*>',
+    ]
+    for pat in pats:
+        m = re.search(pat, page, re.I)
+        if m:
+            return _slice_balanced(page, m)
+    return ""
+
+
+def _make_generic_body(sid: str):
+    """非 WordPress 源的正文尽力而为：抓文章页，定位正文容器后抽纯文本。"""
+    def _body(link: str, limit: int = BODY_KEEP) -> str:
+        proxy = _source_proxy(sid)
+        raw = _http_get(link, timeout=BODY_FETCH_TIMEOUT, proxy=proxy)
+        if not raw:
+            return ""
+        page = raw.decode("utf-8", "replace")
+        seg = _generic_article_seg(page)
+        if not seg:
+            return ""
+        return _join_blocks(_blocks_from_seg(seg), drop_ui=False, limit=limit)
+    return _body
 
 
 # ---------------- 配置持久化（news_sources.json） ----------------
@@ -554,3 +1072,14 @@ def collect_now(sid: str) -> dict:
 # 注册进的是本模块的 SOURCES（news/push.py 那边 import 的就是这一份）。
 _register_nhk()
 _register_yahoo()
+_register_bbc()
+_register_daum()
+_register_khaosod()
+_register_asahi()
+_register_nikkei()
+_register_guardian()
+_register_aljazeera()
+_register_yonhap()
+_register_chosun()
+_register_matichon()
+_register_standard()

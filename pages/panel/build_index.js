@@ -28,7 +28,7 @@ let partial = fs.readFileSync(PARTIAL, 'utf8');
 partial = partial.replace(/^\s*<!--[\s\S]*?-->\s*/, '');
 
 // 2) 内联 8 个 frag（按占位顺序，缺哪个就报错退出）
-const frags = ['vocab', 'grammar', 'bank', 'quiz', 'push', 'news', 'commands', 'editor'];
+const frags = ['vocab', 'grammar', 'bank', 'quiz', 'push', 'news', 'commands', 'subscribe', 'editor'];
 for (const f of frags) {
   const p = path.join(FRAG_DIR, f + '.html');
   if (!fs.existsSync(p)) {
@@ -82,6 +82,7 @@ ${partial}
   <script src="./js/frag/quiz.js"></script>
   <script src="./js/frag/news.js"></script>
   <script src="./js/frag/commands.js"></script>
+  <script src="./js/frag/subscribe.js"></script>
   <script src="./js/module.js"></script>
 </body>
 </html>

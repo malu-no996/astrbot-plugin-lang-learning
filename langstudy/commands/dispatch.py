@@ -28,6 +28,7 @@ from loguru import logger
 
 from .. import base, platforms
 from .. import push as push_mod
+from .. import subs as subs_mod
 from ..quiz import session as quiz_session
 from . import targets as tgt
 from .args import ARG_HELP, parse_quiz_args
@@ -86,6 +87,33 @@ def at_me(event) -> bool:
 # ---------------- 执行 ----------------
 
 
+def _reply_msg_id(event) -> str | None:
+    """从事件里取 botpy 消息 id（QQ 官方**被动回复**要引用它，否则被判成主动消息被拒）。
+
+    AstrBot 的 qqofficial 适配器把 botpy 消息的 `id` 写进了 `event.message_obj.message_id`
+    （qqofficial_platform_adapter._parse_from_qqofficial：abm.message_id = message.id）。
+    取不到返回 None —— 那种场景（定时推送，没有触发它的用户消息）就走主动发送。
+    """
+    try:
+        mo = getattr(event, "message_obj", None)
+    except Exception:  # noqa: BLE001
+        mo = None
+    for obj in (mo, event):
+        if obj is None:
+            continue
+        mid = getattr(obj, "message_id", None)
+        if mid:
+            return str(mid)
+        raw = getattr(obj, "raw_message", None)
+        if raw is not None:
+            rid = getattr(raw, "id", None)
+            if not rid and isinstance(raw, dict):
+                rid = raw.get("id")
+            if rid:
+                return str(rid)
+    return None
+
+
 async def _safe_run(label: str, coro) -> str:
     """跑一条命令，返回**要回给用户的话**（空串 = 什么都不回）。
 
@@ -109,7 +137,6 @@ async def _run_quiz(rule: dict, target: dict, overrides: dict | None = None,
     """出一道题（页面「立即出题」同一条路）。
 
     `overrides` = 命令里带的参数，**只覆盖这一次调用**，不写回规则。
-    `reply_msg_id` = 触发消息 ID，官方机器人被动回复必须带，否则会判成主动消息。
 
     ⚠️ 最前面那道「形状检查」不是多余的：曾经因为把推送规则当答题规则传进来，用户发
     「日语单词」却收到「❌ 日语答题：无可用题目」—— 推送规则根本没有题源口径。
@@ -134,7 +161,7 @@ async def handle_message(event) -> str | None:
     platform_id = str(event.get_platform_id() or "").strip()
     group_id = str(event.get_group_id() or "").strip()
     sender_id = str(event.get_sender_id() or "").strip()
-    message_id = str(event.get_message_id() or "").strip() or None
+    reply_msg_id = _reply_msg_id(event)
 
     if group_id:
         # 官方机器人没有「所在群列表」接口，面板的群下拉靠「见过的会话」积累
@@ -163,6 +190,20 @@ async def handle_message(event) -> str | None:
     if not group_id:
         return "外语学习的命令只在群里用（推送 / 答题 / 菜单都是群里的东西）"
 
+    # 订阅 / 退订命令：订阅X语单词 / 订阅X语语法 / 订阅X语答题 / 订阅X语新闻（退订同理）
+    sub_cmd = subs_mod.parse_subscribe_cmd(word)
+    if sub_cmd:
+        if sub_cmd["action"] == "unsubscribe":
+            res = await subs_mod.unsubscribe(group_id, sub_cmd["lang"], sub_cmd["svc"])
+        else:
+            sub_name = str(event.get_sender_name() or "").strip()
+            grp_name = str(getattr(event, "get_group_name", lambda: "")() or "").strip()
+            res = await subs_mod.subscribe_and_push(
+                group_id, platform_id, grp_name, sender_id, sub_name,
+                sub_cmd["lang"], sub_cmd["svc"],
+                reply_msg_id=reply_msg_id)
+        return res.get("message") or ""
+
     menus = menu_langs(word)                  # 「学习菜单」是语言级命令，不绑规则
     hits = match_rules(word)                  # 只看触发词 + 启用
     if not hits and not menus:
@@ -178,8 +219,9 @@ async def handle_message(event) -> str | None:
     lines: list[str] = []
     for lang in menus:
         label = f"{base.lang_label(lang)}{base.MENU_SUFFIX}"
-        result = await _safe_run(label, run_menu(platform_id, "group", group_id, lang,
-                                                reply_msg_id=message_id))
+        result = await _safe_run(
+            label, run_menu(platform_id, "group", group_id, lang, reply_msg_id=reply_msg_id)
+        )
         if result:
             lines.append(result)
 
@@ -206,9 +248,9 @@ async def handle_message(event) -> str | None:
             continue
         multi = len(rows) > 1
         for row in rows:
-            run = (_run_quiz(rule, row, overrides, reply_msg_id=message_id) if is_quiz
+            run = (_run_quiz(rule, row, overrides, reply_msg_id) if is_quiz
                    else push_mod.run_rule(ident, "命令", rule=rule, target=row,
-                                          reply_msg_id=message_id))
+                                         reply_msg_id=reply_msg_id))
             result = await _safe_run(label + tgt.where(row, multi), run)
             if result:
                 lines.append(result)

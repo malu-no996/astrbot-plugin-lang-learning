@@ -136,6 +136,7 @@
         ['quiz', 'LsQuiz'],
         ['commands', 'LsCommands'],
         ['news', 'LsNews'],
+        ['subscribe', 'LsSubscribe'],
         ['editor', 'LsEditor'],
       ];
       const hooks = { ls, lsGet, lsPostJson, call, lsState, lsCount, lsLangLabel, lsTimeFmt };
@@ -151,7 +152,7 @@
       // 记住上次停留的语言 / 子页（与管理页一级选项卡一致的思路：localStorage）
       try {
         const savedTab = localStorage.getItem('langstudy.tab') || '';
-        if (['vocab', 'grammar', 'bank', 'quiz', 'push', 'news', 'commands'].includes(savedTab)) ls.tab = savedTab;
+        if (['vocab', 'grammar', 'bank', 'quiz', 'push', 'news', 'commands', 'subscribe'].includes(savedTab)) ls.tab = savedTab;
         const savedLang = localStorage.getItem('langstudy.lang') || '';
         if (lsLangs.some(x => x.key === savedLang)) ls.lang = savedLang;
       } catch (e) { /* 拿不到就按默认（日语 · 单词） */ }
@@ -174,9 +175,6 @@
         lsVocabReset: api.vocab.vocabReset,
         lsVocabPage: api.vocab.vocabPage,
         lsVocabDelete: api.vocab.vocabDelete,
-        lsVocabToggleSelect: api.vocab.vocabToggleSelect,
-        lsVocabSelectAll: api.vocab.vocabSelectAll,
-        lsVocabRemoveSelected: api.vocab.vocabRemoveSelected,
         lsVocabEditOpen: api.vocab.vocabEditOpen,
         lsVocabChooseFile: api.vocab.vocabChooseFile,
         lsVocabPickFile: api.vocab.vocabPickFile,
@@ -185,14 +183,14 @@
         lsVocabExport: api.vocab.vocabExport,
         lsVocabRenameGroup: api.vocab.vocabRenameGroup,
         lsVocabDeleteGroup: api.vocab.vocabDeleteGroup,
+        lsVocabToggleSelect: api.vocab.vocabToggleSelect,
+        lsVocabSelectAll: api.vocab.vocabSelectAll,
+        lsVocabRemoveSelected: api.vocab.vocabRemoveSelected,
         lsGrammarLoad: api.grammar.grammarLoad,
         lsGrammarSearch: api.grammar.grammarSearch,
         lsGrammarReset: api.grammar.grammarReset,
         lsGrammarPage: api.grammar.grammarPage,
         lsGrammarDelete: api.grammar.grammarDelete,
-        lsGrammarToggleSelect: api.grammar.grammarToggleSelect,
-        lsGrammarSelectAll: api.grammar.grammarSelectAll,
-        lsGrammarRemoveSelected: api.grammar.grammarRemoveSelected,
         lsGrammarEditOpen: api.grammar.grammarEditOpen,
         lsGrammarChooseFile: api.grammar.grammarChooseFile,
         lsGrammarPickFile: api.grammar.grammarPickFile,
@@ -201,6 +199,9 @@
         lsGrammarExport: api.grammar.grammarExport,
         lsGrammarRenameGroup: api.grammar.grammarRenameGroup,
         lsGrammarDeleteGroup: api.grammar.grammarDeleteGroup,
+        lsGrammarToggleSelect: api.grammar.grammarToggleSelect,
+        lsGrammarSelectAll: api.grammar.grammarSelectAll,
+        lsGrammarRemoveSelected: api.grammar.grammarRemoveSelected,
         lsPushLoad: api.push.pushLoad,
         lsPushTargets: api.push.pushTargets,
         lsPushEditOpen: api.push.pushEditOpen,
@@ -282,6 +283,8 @@
         lsNewsEnter: api.news.onEnter,
         lsNewsLoad: api.news.newsLoad,
         lsNewsPushRulesLoad: api.news.newsPushRulesLoad,
+        lsNewsSubsLoad: api.news.newsSubsLoad,
+        lsNewsSubsSave: api.news.newsSubsSave,
         lsNewsCatToggle: api.news.newsCatToggle,
         lsNewsSourceCfgSave: api.news.newsSourceCfgSave,
         lsNewsCollect: api.news.newsCollect,
@@ -301,6 +304,19 @@
         lsNewsFmt: api.news.newsFmt,
         lsNewsItemBody: api.news.newsItemBody,
         lsNewsItemBodyClose: api.news.newsItemBodyClose,
+        lsSubsLoad: api.subscribe.subsLoad,
+        lsSubsToggle: api.subscribe.subsToggle,
+        lsSubsEditOpen: api.subscribe.subsEditOpen,
+        lsSubsEditCancel: api.subscribe.subsEditCancel,
+        lsSubsTestOpen: api.subscribe.subsTestOpen,
+        lsSubsTestCancel: api.subscribe.subsTestCancel,
+        lsSubsTestRun: api.subscribe.subsTestRun,
+        lsSubsSave: api.subscribe.subsSave,
+        lsSubsDel: api.subscribe.subsDel,
+        lsSubsDelCancel: api.subscribe.subsDelCancel,
+        lsSubsHasServiceEdit: api.subscribe.hasServiceEdit,
+        lsSubsToggleService: api.subscribe.toggleService,
+        lsSubsFmtServiceList: api.subscribe.fmtServiceList,
       });
 
       return { lsEnter };
