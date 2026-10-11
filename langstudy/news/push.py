@@ -25,9 +25,11 @@ from .sources import (
     load_cache,
 )
 
-# 这些语言的新闻直接发**文字**（不走图片渲染）：其文字字形不在本机渲染字体
-# （微软雅黑）里，强行出图会变成方框。聊天客户端本身有该语言字体，发文字更稳。
-TEXT_ONLY_LANGS = {"th"}
+# 这些语言的新闻直接发**文字**（不走图片渲染）。当前为空：所有语言都渲染成图片发出，
+# 因为 `news/image.py` 已经做了字符级字体回退（韩文→Noto Sans KR / 泰文→Noto Sans Thai /
+# 中日拉丁→微软雅黑），小众文字在图上也能正常显示，不会变方块。
+# 若以后某个语言在图片渲染上仍出问题，再把它加回这个集合走纯文字通道。
+TEXT_ONLY_LANGS: set[str] = set()
 
 PUSH_FILE = NEWS_DIR / "news_push.json"
 # ---------------- 新闻推送规则（news_push.json） ----------------
@@ -134,10 +136,12 @@ def news_due(now: float | None = None) -> list[dict]:
     return out
 
 
-NEWS_BODY_MAX = 300            # 单条新闻正文截断上限（字符），避免一条消息过长
+NEWS_BODY_MAX = 300            # 单条新闻正文截断上限（字符），避免一条消息过长（图片/非泰语通道）
+NEWS_BODY_MAX_TEXT = 1000       # 文字通道（泰语等小众文字）截断上限更高，一条消息内能读完整正文
 
 
-def render_news_item(source_name: str, item: dict, body: str | None = None) -> str:
+def render_news_item(source_name: str, item: dict, body: str | None = None,
+                     max_chars: int = NEWS_BODY_MAX) -> str:
     """单条新闻渲染成一段短文本（**一条消息发一条**，正文超长截断）。
 
     body: 该条新闻的正文（None = 没抓到 / 不开 with_body）→ 回退到链接，
@@ -151,8 +155,8 @@ def render_news_item(source_name: str, item: dict, body: str | None = None) -> s
     head += title
     if body:
         body = str(body).strip()
-        if len(body) > NEWS_BODY_MAX:
-            body = body[:NEWS_BODY_MAX].rstrip() + "…"
+        if len(body) > max_chars:
+            body = body[:max_chars].rstrip() + "…"
         return f"{head}\n{body}"
     link = item.get("link") or ""
     return f"{head}\n{link}" if link else head
@@ -163,9 +167,10 @@ async def send_news_items(rule: dict, items: list[dict], bodies: dict[str, str] 
                           reply_msg_id: str | None = None) -> dict:
     """把挑出来的新闻**逐条**发出去（一条新闻 = 一条消息）。
 
-    - 泰语等 `TEXT_ONLY_LANGS` 里的语言 → 直接发**文字**（标题 + 正文 + 链接），
-      聊天客户端有该语言字体，比出图（无字形→方框）更稳。
-    - 其它语言 → 渲染成**图片**发出。
+    - 默认所有语言都渲染成**图片**发出（`news/image.py` 做了字符级字体回退，
+      韩文 / 泰文 / 中日拉丁都能在图上正确显示，不会变方块）。
+    - 若某语言被加入 `TEXT_ONLY_LANGS`，则改为直接发**文字**（标题 + 正文 + 链接），
+      用于图片渲染仍出问题的极端情况。
 
     返回 `{ok: 成功条数, sent_ids: [成功发出的 item id]}` —— 部分失败也继续，
     调用方据此记录去重。每条之间留 0.6s，避免官方机器人瞬时连发被限频/乱序。
@@ -180,7 +185,7 @@ async def send_news_items(rule: dict, items: list[dict], bodies: dict[str, str] 
         body = (bodies or {}).get(it.get("id")) if rule.get("with_body") else None
         try:
             if use_text:
-                text = render_news_item(source_name, it, body)
+                text = render_news_item(source_name, it, body, max_chars=NEWS_BODY_MAX_TEXT)
                 # 泰语等小众文字在官方 markdown 渲染器上容易报错，直接走纯文本
                 await sender.send_text(pid, target_type, tid, text,
                                        reply_msg_id=reply_msg_id, raw=True)
