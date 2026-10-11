@@ -4,7 +4,8 @@
 - 中日 / 拉丁 / 数字 / 标点 → 微软雅黑（系统，多系统路径兜底）
 - 韩文（谚文）→ 随插件分发的 Noto Sans KR（`news/fonts/`，开源 OFL 许可），
   优先复用系统自带的 Malgun Gothic（仅 Windows 有，更清晰），系统没有时回退到分发字体
-- 泰文 → Noto Sans Thai（随插件分发，`news/fonts/`，开源 OFL 许可）
+- 泰文 → Sarabun（**有环印刷体**，泰语教材/公文/书籍的标准字体，随插件分发，OFL 许可），
+  找不到时回退无环现代体 Noto Sans Thai（也随插件分发，OFL 许可）
 这样小众文字在任何系统上都不会显示成方块（不再依赖 Windows 独占的 Malgun）。
 """
 from __future__ import annotations
@@ -36,14 +37,17 @@ COLOR_BORDER = (230, 230, 230)
 # 三类角色字体：cjk（中日 + 拉丁/数字/标点）、kr（韩文）、th（泰文）。
 # 韩文 / 泰文都随插件分发开源字体（OFL 许可），不再依赖系统独占字体：
 #   - 韩文优先系统 Malgun（仅 Windows 自带，更清晰），没有则回退到分发的 Noto Sans KR
-#   - 泰文分发 Noto Sans Thai
+#   - 泰文优先 Sarabun（有环印刷体，教材/公文的标准字形），否则回退 Noto Sans Thai（无环现代体）
 # 这样换到别的系统 / 别的电脑也能正常显示，不会变方块。
 _DIR = os.path.dirname(os.path.abspath(__file__))
 # 注意：NotoSansKR-Regular.ttf 是从 Noto Sans KR 可变字体**子集化**出来的静态 Regular
 # （保留全部谚文音节 U+AC00–D7A3 + 谚文字母 + 拉丁 + 标点，去掉其它字重 / hinting / 无关字符，
 # 体积从 10.4MB 压到约 2.5MB，零方块风险）。
 _FONT_KR = os.path.join(_DIR, "fonts", "NotoSansKR-Regular.ttf")
-_FONT_THAI = os.path.join(_DIR, "fonts", "NotoSansThai-Regular.ttf")
+# 泰文：优先**有环印刷体** Sarabun（教材/书籍的标准字形，帶"头"更接近泰语印刷体），
+# 回退到无环现代体 Noto Sans Thai（现代界面体，ร/น 等会简化得接近拉丁字母）。
+_FONT_THAI_PRINT = os.path.join(_DIR, "fonts", "Sarabun-Regular.ttf")
+_FONT_THAI_MODERN = os.path.join(_DIR, "fonts", "NotoSansThai-Regular.ttf")
 
 _CJK_NORMAL = [
     r"C:\Windows\Fonts\msyh.ttc",
@@ -97,7 +101,7 @@ def _role_font(role: str, size: int, bold: bool) -> ImageFont.ImageFont:
         if f is None:
             f = _load_first(_CJK_BOLD if bold else _CJK_NORMAL, size)
     elif role == "th":
-        f = _load_first([_FONT_THAI], size)
+        f = _load_first([_FONT_THAI_PRINT, _FONT_THAI_MODERN], size)
         if f is None:
             f = _load_first(_CJK_NORMAL, size)
     else:  # cjk
