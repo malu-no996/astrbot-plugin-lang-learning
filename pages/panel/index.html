@@ -1626,7 +1626,7 @@
         <td>{{ lsSubsFmtServiceList(sub) }}</td>
         <td>{{ sub.interval_minutes }}</td>
         <td>
-          <button class="ls-btn-xs" :style="sub.enabled ? 'color:var(--ok);border-color:var(--ok)' : 'color:var(--muted)'"
+          <button class="ls-btn-xs" :class="sub.enabled ? 'ls-status-on' : 'ls-status-off'"
                   @click="lsSubsToggle(sub)">{{ sub.enabled ? '启用中' : '已停用' }}</button>
         </td>
         <td>

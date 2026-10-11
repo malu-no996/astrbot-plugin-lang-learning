@@ -77,6 +77,8 @@
 
 .ls-btn-xs { padding: 3px 9px; font-size: 12px; margin-right: 6px; }
 .ls-btn-danger { border-color: var(--err); color: var(--err); }
+.ls-status-on { background: #e6f6ec; color: var(--ok); border: 1px solid #b7e1c5; }
+.ls-status-off { background: #f6f8fa; color: var(--muted); border: 1px solid var(--line); }
 
 .ls-pager { display: flex; align-items: center; gap: 10px; margin-top: 12px; }
 .ls-preview-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 8px; }
