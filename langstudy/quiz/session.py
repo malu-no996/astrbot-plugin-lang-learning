@@ -35,7 +35,11 @@ TICK = 10                     # 轮询间隔（秒）：答题窗口按分钟计
 FIRST_DELAY = 15
 _running = False
 
-_SESSIONS: dict = {}          # rule_id -> 当前开放的会话（内存 + 落盘）
+# ⚠️ key = 「实例 + 目标会话」(`_busy_key`)，**不是 rule_id**。
+# 一条规则可以被多个群订阅（`subscriptions.json`），若按 rule_id 存，后开的那个群
+# 会把前一个群的会话**直接覆盖**掉 —— 前一群的题目既不出榜、作答也永远统计不到
+# （用户实测：「倒计时到了不能好好统计答案」）。所以每场会话一个 key。
+_SESSIONS: dict = {}          # "<实例id>|g:<会话id>" -> 当前开放的会话（内存 + 落盘）
 _OPENING: set[str] = set()    # 「正在开题中」的占位（见 open_session）
 BUSY_MSG = "本群还有一道题没结束，等它出榜再来"
 
@@ -72,15 +76,34 @@ def _load_sessions_into_mem() -> None:
 
 
 def current_session(rule_id: str) -> dict | None:
-    s = _SESSIONS.get(str(rule_id))
-    if s and not s.get("closed"):
-        return s
-    return None
+    """这条规则当前开着的会话（一条规则可能被多个群同时开着，取**最近开**的那场）。
+
+    面板「当前会话 / 倒计时」按规则查，所以这里按 `rule_id` 过滤而非按 key 取。
+    """
+    rid = str(rule_id)
+    best = None
+    for s in _SESSIONS.values():
+        if s.get("closed") or str(s.get("rule_id")) != rid:
+            continue
+        if best is None or s.get("started_at", 0) > best.get("started_at", 0):
+            best = s
+    return best
 
 
 def drop_session(rule_id: str) -> None:
-    _SESSIONS.pop(str(rule_id), None)
+    """删掉这条规则**全部**开放会话（规则被删 / 改时用）。"""
+    rid = str(rule_id)
+    for k in [k for k, v in _SESSIONS.items() if str((v or {}).get("rule_id")) == rid]:
+        _SESSIONS.pop(k, None)
     _save_sessions()
+
+
+def _key_of(session: dict) -> str | None:
+    """反查某个 session dict 在 `_SESSIONS` 里的 key（按对象身份找）。"""
+    for k, v in _SESSIONS.items():
+        if v is session:
+            return k
+    return None
 
 
 # ---------------- 会话 key ----------------
@@ -134,9 +157,16 @@ def find_open_session(platform_id: str, target_keys) -> dict | None:
 # ---------------- 出榜 ----------------
 
 
-async def close_session(rid: str) -> None:
-    """关窗出榜：**一条**结果消息 + 写回规则状态。"""
-    s = _SESSIONS.get(str(rid))
+async def close_session(key: str) -> None:
+    """关窗出榜：**一条**结果消息 + 写回规则状态。`key` = `_SESSIONS` 的键。
+
+    ⚠️ 发送目标一律取 **session 里记下的运行时值**（`instance` / `target_id`），
+    **不能**再回头读 `get_quiz_rule(rid)` 的目标 —— 规则里那份是配置态（可能是从
+    nonebot 版迁移来的真实 QQ 号 / 真实群号），AstrBot 运行时用的是「平台实例 id +
+    会话 id（官方是 openid）」，两者对不上：`send_text` 会走到非官方分支、对一个不存在的
+    实例静默失败 —— 表现就是**群里永远看不到榜单**（用户实测「倒计时到了不能好好统计答案」）。
+    """
+    s = _SESSIONS.get(str(key))
     if s is None or s.get("closed"):
         return
     s["closed"] = True
@@ -148,37 +178,43 @@ async def close_session(rid: str) -> None:
             correct.append(rec)
         else:
             wrong.append(rec)
+    rid = str(s.get("rule_id") or "")
     rule = get_quiz_rule(rid)
+    # 发送目标：session 里存的运行时标识（出题那一刻就固化下来的）
+    pid = str(s.get("instance") or "").strip()
+    tid = str(s.get("target_id") or s.get("group_openid") or "").strip()
+    ttype = str(s.get("target_type") or "group")
+    if rule and pid and tid:
+        # 官方群答主若没拿到昵称，出榜前一并补上（correct/wrong 里就是 answers
+        # 里那些 dict 本体，改 name 两处一起变）
+        try:
+            await _fill_official_names(s)
+        except Exception as exc:  # noqa: BLE001 —— 补不上就用短代号，不影响出榜
+            logger.debug(f"答题：补昵称失败（已忽略）：{exc}")
+        text = render.result_text(q, correct, wrong, rule)
+        try:
+            await sender.send_text(pid, ttype, tid, text,
+                                  reply_msg_id=s.get("reply_msg_id") or None)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(f"答题：结果发送失败：{exc}")
     if rule:
-        pid = str(rule.get("instance_qq") or "").strip()
-        tid = str(rule.get("target_id") or "").strip()
-        if pid and tid:
-            # 官方群答主若没拿到昵称，出榜前一并补上（correct/wrong 里就是 answers
-            # 里那些 dict 本体，改 name 两处一起变）
-            try:
-                await _fill_official_names(rule, s)
-            except Exception as exc:  # noqa: BLE001 —— 补不上就用短代号，不影响出榜
-                logger.debug(f"答题：补昵称失败（已忽略）：{exc}")
-            text = render.result_text(q, correct, wrong, rule)
-            try:
-                await sender.send_text(pid, rule.get("target_type"), tid, text,
-                                      reply_msg_id=s.get("reply_msg_id") or None)
-            except Exception as exc:  # noqa: BLE001
-                logger.warning(f"答题：结果发送失败：{exc}")
         summary = f"答完：对 {len(correct)} / 错 {len(wrong)}（共 {len(s.get('answers', {}))} 人作答）"
         set_quiz_rule_field(rid, last_result=summary)
-    _SESSIONS.pop(str(rid), None)
+    _SESSIONS.pop(str(key), None)
     _save_sessions()
 
 
-async def _fill_official_names(rule: dict, session: dict) -> None:
-    """出榜前把官方答主的短代号换成真昵称（只在这批人里还有人没昵称时才去拉接口）。"""
+async def _fill_official_names(session: dict) -> None:
+    """出榜前把官方答主的短代号换成真昵称（只在这批人里还有人没昵称时才去拉接口）。
+
+    实例 / 群 openid 都从 **session** 取（运行时真值），不看规则里那份配置值。
+    """
     if not session.get("official"):
         return
     answers = session.get("answers") or {}
     if not answers or not any(names.is_short(r.get("name")) for r in answers.values()):
         return
-    pid = str(rule.get("instance_qq") or "").strip()
+    pid = str(session.get("instance") or "").strip()
     openid = str(session.get("group_openid") or "").strip()
     got = await names.fetch_official_names(pid, openid)
     if not got:
@@ -229,10 +265,9 @@ async def _open_session_locked(rule: dict, rid: str, now: float, pid: str, tkey:
         if now < float(prev.get("ends_at") or 0):
             return {"ok": False, "message": BUSY_MSG}
         # 窗口已经结束、只是收尾循环（10s 一轮）还没轮到它 → **先出榜再开新题**。
-        # 否则同一规则的会话会被下面那句 `_SESSIONS[rid] = …` 直接覆盖，那份榜单
-        # （以及那道题的作答记录）就永远发不出来了。
+        # 否则这场会话（连同那份榜单、那道题的作答记录）就被直接丢掉了。
         try:
-            await close_session(str(prev.get("rule_id") or ""))
+            await close_session(_key_of(prev) or "")
         except Exception as exc:  # noqa: BLE001
             logger.warning(f"答题：开新题前收尾旧会话失败（已忽略）：{exc}")
     q, relax = pick(rule)
@@ -265,11 +300,14 @@ async def _open_session_locked(rule: dict, rid: str, now: float, pid: str, tkey:
         set_quiz_rule_field(rid, last_result=msg, last_run_at=int(now))
         _reschedule(rule, now)
         return {"ok": False, "message": msg}
-    _SESSIONS[rid] = {
+    _SESSIONS[_busy_key(pid, tkey)] = {
         "rule_id": rid,
         "instance": pid,
         "target_key": tkey,
         "target_type": rule.get("target_type"),
+        # target_id = 出题这一刻的**运行时**发送目标（官方是 group_openid，OneBot 是真群号）；
+        # 出榜时直接用这个，绝不回头读规则里那份（可能对不上的）配置值。
+        "target_id": str(rule.get("target_id") or "").strip(),
         "official": bool(platforms.is_official(pid)),
         "group_openid": str(rule.get("target_id") or "").strip(),
         "reply_msg_id": reply_msg_id,
@@ -386,14 +424,16 @@ async def record_answer(event, platform_id: str, sid: str, text: str) -> bool:
 
 async def _close_expired() -> None:
     now = time.time()
-    for rid in list(_SESSIONS):
-        s = _SESSIONS[rid]
+    for key in list(_SESSIONS):
+        s = _SESSIONS.get(key)
+        if not s:
+            continue
         if s.get("closed"):
-            _SESSIONS.pop(rid, None)
+            _SESSIONS.pop(key, None)
             continue
         if now >= s.get("ends_at", 0):
             try:
-                await close_session(rid)
+                await close_session(key)
             except Exception as exc:  # noqa: BLE001
                 logger.warning(f"答题：关窗出榜异常：{exc}")
 
