@@ -39,9 +39,10 @@ COLOR_BORDER = (230, 230, 230)
 #   - 泰文分发 Noto Sans Thai
 # 这样换到别的系统 / 别的电脑也能正常显示，不会变方块。
 _DIR = os.path.dirname(os.path.abspath(__file__))
-# 注意：NotoSansKR.ttf 是**可变字体**（含 Thin~Black 多档字重），Pillow 默认会加载到
-# 最细的 Thin 实例，这里在 _role_font 里统一强制成 Regular / Bold，保证可读性。
-_FONT_KR = os.path.join(_DIR, "fonts", "NotoSansKR.ttf")
+# 注意：NotoSansKR-Regular.ttf 是从 Noto Sans KR 可变字体**子集化**出来的静态 Regular
+# （保留全部谚文音节 U+AC00–D7A3 + 谚文字母 + 拉丁 + 标点，去掉其它字重 / hinting / 无关字符，
+# 体积从 10.4MB 压到约 2.5MB，零方块风险）。
+_FONT_KR = os.path.join(_DIR, "fonts", "NotoSansKR-Regular.ttf")
 _FONT_THAI = os.path.join(_DIR, "fonts", "NotoSansThai-Regular.ttf")
 
 _CJK_NORMAL = [
@@ -66,7 +67,7 @@ _KR_NORMAL = [
 _KR_BOLD = [
     r"C:\Windows\Fonts\malgunbd.ttf",
     r"C:\Windows\Fonts\malgun.ttf",
-    _FONT_KR,
+    _FONT_KR,  # 没有 Malgun 的系统回退到分发的 Noto Sans KR（静态 Regular，标题用大字号代替加粗）
 ]
 
 _font_cache: dict = {}
