@@ -316,6 +316,8 @@
         lsSubsDelCancel: api.subscribe.subsDelCancel,
         lsSubsHasServiceEdit: api.subscribe.hasServiceEdit,
         lsSubsToggleService: api.subscribe.toggleService,
+        lsSubsEditLangs: api.subscribe.editLangs,
+        lsSubsTestLangs: api.subscribe.testLangs,
         lsSubsFmtServiceList: api.subscribe.fmtServiceList,
       });
 

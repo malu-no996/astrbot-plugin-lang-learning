@@ -84,6 +84,7 @@
           services: (sub.services || []).slice(),
           interval_minutes: sub.interval_minutes,
           enabled: sub.enabled,
+          lang: ls.lang,   // 快照打开弹窗时的当前语言
         };
       }
       function subsEditCancel() { s.editForm = null; }
@@ -96,9 +97,21 @@
           subscriber_name: sub.subscriber_name,
           interval_minutes: sub.interval_minutes,
           enabled: sub.enabled,
+          lang: ls.lang,   // 快照打开弹窗时的当前语言
         };
       }
       function subsTestCancel() { s.testForm = null; s.testRunningKey = ''; }
+
+      function editLangs() {
+        var ef = s.editForm;
+        if (!ef) return [];
+        return s.langs.filter(function (l) { return l.key === ef.lang; });
+      }
+      function testLangs() {
+        var tf = s.testForm;
+        if (!tf) return [];
+        return s.langs.filter(function (l) { return l.key === tf.lang; });
+      }
 
       async function subsTestRun(lang, type) {
         if (!s.testForm) return;
@@ -171,6 +184,8 @@
         subsDelCancel: subsDelCancel,
         hasServiceEdit: hasServiceEdit,
         toggleService: toggleService,
+        editLangs: editLangs,
+        testLangs: testLangs,
         serviceLabel: serviceLabel,
         langLabel: langLabel,
         fmtServiceList: fmtServiceList,

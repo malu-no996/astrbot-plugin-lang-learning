@@ -82,7 +82,7 @@
             </tr>
           </thead>
           <tbody>
-            <tr v-for="l in ls.subscribe.langs" :key="l.key">
+            <tr v-for="l in lsSubsEditLangs()" :key="l.key">
               <th>{{ l.label }}</th>
               <td v-for="t in ls.subscribe.serviceTypes" :key="l.key + t" style="text-align:center">
                 <input type="checkbox" :checked="lsSubsHasServiceEdit(l.key, t)" @change="lsSubsToggleService(l.key, t)">
@@ -130,7 +130,7 @@
             </tr>
           </thead>
           <tbody>
-            <tr v-for="l in ls.subscribe.langs" :key="l.key">
+            <tr v-for="l in lsSubsTestLangs()" :key="l.key">
               <th>{{ l.label }}</th>
               <td v-for="t in ls.subscribe.serviceTypes" :key="l.key + t" style="text-align:center">
                 <button class="ls-btn-xs"
