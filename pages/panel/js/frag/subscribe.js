@@ -84,6 +84,8 @@
           services: (sub.services || []).slice(),
           interval_minutes: sub.interval_minutes,
           enabled: sub.enabled,
+          rest_start: sub.rest_start || '',
+          rest_end: sub.rest_end || '',
           lang: ls.lang,   // 快照打开弹窗时的当前语言
         };
       }
@@ -150,6 +152,8 @@
           services: ef.services,
           interval_minutes: Number(ef.interval_minutes) || 120,
           enabled: ef.enabled,
+          rest_start: ef.rest_start || '',
+          rest_end: ef.rest_end || '',
         });
         if (!j || !j.ok) { ctx.notice((j && j.message) || '保存失败', 'err'); return; }
         ctx.notice('已保存', 'ok');

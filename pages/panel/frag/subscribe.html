@@ -33,7 +33,7 @@
         <td style="word-break:break-all">{{ sub.subscriber_id }}</td>
         <td>{{ sub.subscriber_name || '—' }}</td>
         <td>{{ lsSubsFmtServiceList(sub) }}</td>
-        <td>{{ sub.interval_minutes }}</td>
+        <td>{{ sub.interval_minutes }}<span v-if="sub.rest_start && sub.rest_end" class="ls-hint"> · 休息 {{ sub.rest_start }}-{{ sub.rest_end }}</span></td>
         <td>
           <button class="ls-btn-xs" :class="sub.enabled ? 'ls-status-on' : 'ls-status-off'"
                   @click="lsSubsToggle(sub)">{{ sub.enabled ? '启用中' : '已停用' }}</button>
@@ -70,6 +70,14 @@
           <input class="ls-input" type="number" min="10" max="1440" v-model.number="ls.subscribe.editForm.interval_minutes"></label>
         <label class="ls-field ls-check">
           <input type="checkbox" v-model="ls.subscribe.editForm.enabled"> 启用（停用后不再主动推送）</label>
+      </div>
+
+      <div class="row">
+        <label class="ls-field ls-field-sm"><span>休息开始(HH:MM)</span>
+          <input class="ls-input" v-model="ls.subscribe.editForm.rest_start" placeholder="如 23:00"></label>
+        <label class="ls-field ls-field-sm"><span>休息结束(HH:MM)</span>
+          <input class="ls-input" v-model="ls.subscribe.editForm.rest_end" placeholder="如 07:00"></label>
+        <span class="ls-hint">休息时间不主动推送（手动「测试」不受影响）。两个都留空=不限制；支持跨午夜（如 23:00→07:00）。</span>
       </div>
 
       <div class="ls-field ls-field-wide">

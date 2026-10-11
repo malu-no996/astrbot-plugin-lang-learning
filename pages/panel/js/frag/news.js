@@ -60,7 +60,7 @@ window.LsNews = {
         target_id: '', group_source: '', target_name: '',
         mode: 'daily', times: ['08:00'], timesText: '08:00',
         jitter_minutes: 15, interval_minutes: 120, count: 5, categories: [],
-        with_body: true,
+        with_body: true, rest_start: '', rest_end: '',
       };
     }
 

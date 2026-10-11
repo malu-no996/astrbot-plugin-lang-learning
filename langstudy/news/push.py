@@ -48,6 +48,8 @@ DEFAULT_NEWS_RULE = {
     "jitter_minutes": 15,
     "interval_minutes": 120,
     "count": 1,
+    "rest_start": "",                # 休息时段（安静时段）："HH:MM"，留空=不启用
+    "rest_end": "",
     "categories": [],                # 推送端额外过滤（空 = 已采集的全部）
     "with_body": True,               # 推送时抓正文显示（不开则只发标题+链接）
     "next_run_at": 0,
@@ -84,6 +86,8 @@ def norm_news_rule(data) -> dict:
     out["interval_minutes"] = max(30, min(int(out.get("interval_minutes") or 120), 1440))
     out["count"] = max(1, min(int(out.get("count") or 1), 20))
     out["sent_ids"] = list(out.get("sent_ids") or [])[:300]
+    out["rest_start"] = base.norm_hhmm(src.get("rest_start") or "")
+    out["rest_end"] = base.norm_hhmm(src.get("rest_end") or "")
     return out
 
 
@@ -132,6 +136,16 @@ def news_due(now: float | None = None) -> list[dict]:
             save_one_news_rule(rr)
             continue
         if now >= nxt:
+            # 休息时段（安静时段）：跳过本次推送，并把下次运行改到休息结束，
+            # 避免每个 tick 都把这条规则当「到点」重复触发。手动「立即推送」不受影响。
+            if base.in_rest_window(now, r.get("rest_start"), r.get("rest_end")):
+                end = base.rest_end_ts(now, r.get("rest_start"), r.get("rest_end"))
+                if end:
+                    rr = dict(r)
+                    rr["next_run_at"] = end
+                    rr["last_result"] = "处于休息时段，已顺延到休息结束"
+                    save_one_news_rule(rr)
+                continue
             out.append(r)
     return out
 

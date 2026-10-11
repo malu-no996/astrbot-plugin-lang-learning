@@ -43,6 +43,10 @@ async def api_subs_save():
             pass
     if "enabled" in payload:
         fields["enabled"] = bool(payload["enabled"])
+    if "rest_start" in payload:
+        fields["rest_start"] = base.norm_hhmm(payload.get("rest_start"))
+    if "rest_end" in payload:
+        fields["rest_end"] = base.norm_hhmm(payload.get("rest_end"))
     if "news_count" in payload:
         try:
             fields["news_count"] = max(1, min(int(payload["news_count"]), 20))

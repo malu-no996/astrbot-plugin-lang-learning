@@ -91,6 +91,7 @@
           <td>
             <span v-if="r.mode==='interval'">每 {{ r.interval_minutes }} 分</span>
             <span v-else>{{ (r.times||[]).join(' / ') }}</span>
+            <span v-if="r.rest_start && r.rest_end" class="ls-hint">· 休息 {{ r.rest_start }}-{{ r.rest_end }}</span>
             <span v-if="r.last_result" class="ls-hint">· {{ r.last_result }}</span>
           </td>
           <td>{{ r.count }}</td>
@@ -218,6 +219,14 @@
         <input type="checkbox" v-model="ls.news.pushForm.with_body">
         <span>推送带正文（关则只发标题+链接）</span>
       </label>
+    </div>
+
+    <div class="row">
+      <label class="ls-field ls-field-sm"><span>休息开始(HH:MM)</span>
+        <input class="ls-input" v-model="ls.news.pushForm.rest_start" placeholder="如 23:00"></label>
+      <label class="ls-field ls-field-sm"><span>休息结束(HH:MM)</span>
+        <input class="ls-input" v-model="ls.news.pushForm.rest_end" placeholder="如 07:00"></label>
+      <span class="ls-hint">休息时间不主动推送（手动「立即推送」不受影响）。都留空=不限制；支持跨午夜（如 23:00→07:00）。</span>
     </div>
 
     <div class="row">

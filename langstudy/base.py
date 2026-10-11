@@ -210,3 +210,70 @@ def set_cmd_need_at(value) -> bool:
 
 def today(now: float | None = None) -> str:
     return time.strftime("%Y-%m-%d", time.localtime(now if now is not None else time.time()))
+
+
+# ---------------- 休息时段（安静时段） ----------------
+# 推送的「夜间免打扰」：订阅推送 / 新闻推送规则都可能想「深夜凌晨不推」。
+# 用两个 "HH:MM" 字符串表示 [rest_start, rest_end]；任一为空 / 非法 = 未启用休息时段。
+# 支持跨午夜（rest_start > rest_end，如 23:00 → 07:00）。
+
+
+def _parse_hhmm(value) -> int | None:
+    """把 "HH:MM" 解析成「当天分钟数」（0~1439）；非法返回 None。"""
+    t = str(value or "").strip()
+    if ":" not in t:
+        return None
+    try:
+        hh, mm = t.split(":", 1)
+        hh, mm = int(hh), int(mm)
+        if 0 <= hh <= 23 and 0 <= mm <= 59:
+            return hh * 60 + mm
+    except (ValueError, TypeError):
+        pass
+    return None
+
+
+def norm_hhmm(value) -> str:
+    """规范化休息时段字段：合法 "HH:MM" 原样回写，否则返回空串（= 不启用）。"""
+    m = _parse_hhmm(value)
+    if m is None:
+        return ""
+    return f"{m // 60:02d}:{m % 60:02d}"
+
+
+def in_rest_window(now: float | None = None, rest_start: str = "", rest_end: str = "") -> bool:
+    """判断本地时间 now 是否落在休息时段内（仅看小时:分钟）。
+
+    - rest_start / rest_end 任一为空 / 非法 → 未启用，返回 False。
+    - 同值（如都 "" 或都是 00:00）→ 视为未启用，返回 False。
+    - 正常区间（start < end，如 01:00~06:00）：start <= 当前 <= end 为真。
+    - 跨午夜（start > end，如 23:00~07:00）：当前 >= start 或 当前 <= end 为真。
+    """
+    now = time.time() if now is None else now
+    s = _parse_hhmm(rest_start)
+    e = _parse_hhmm(rest_end)
+    if s is None or e is None or s == e:
+        return False
+    cur = time.localtime(now)
+    cur_min = cur.tm_hour * 60 + cur.tm_min
+    if s < e:
+        return s <= cur_min <= e
+    return cur_min >= s or cur_min <= e
+
+
+def rest_end_ts(now: float | None = None, rest_start: str = "", rest_end: str = "") -> int | None:
+    """若当前处于休息时段，返回「休息结束那一刻」的时间戳（+5s 余量）；否则返回 None。
+
+    跨午夜时 endDate 落在第二天；非跨午夜落在当天。
+    """
+    if not in_rest_window(now, rest_start, rest_end):
+        return None
+    now = time.time() if now is None else now
+    e = _parse_hhmm(rest_end)
+    cur = time.localtime(now)
+    end_today = time.mktime((cur.tm_year, cur.tm_mon, cur.tm_mday,
+                             e // 60, e % 60, 0, cur.tm_wday, cur.tm_yday, cur.tm_isdst))
+    # 跨午夜：rest_end 在「当前时刻已经过去的那一天」→ 实际是明天
+    if e <= (cur.tm_hour * 60 + cur.tm_min):
+        end_today += 86400
+    return int(end_today) + 5

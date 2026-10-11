@@ -113,6 +113,8 @@ def _norm_sub(data) -> dict:
         "enabled": bool(s.get("enabled", True)),
         "interval_minutes": max(10, min(int(s.get("interval_minutes") or DEFAULT_INTERVAL), 1440)),
         "news_count": max(1, min(int(s.get("news_count") or 1), 20)),
+        "rest_start": base.norm_hhmm(s.get("rest_start") or ""),
+        "rest_end": base.norm_hhmm(s.get("rest_end") or ""),
         "created_at": int(s.get("created_at") or 0),
         "last_sent": {str(k): int(v) for k, v in (s.get("last_sent") or {}).items()
                       if parse_service_key(k)[0]},
@@ -159,7 +161,8 @@ def update_sub(group_id: str, fields: dict) -> dict | None:
     两个 ID（group_id / subscriber_id）与 platform_id 一律不可改。
     """
     gid = str(group_id or "").strip()
-    allowed = ("group_name", "subscriber_name", "services", "interval_minutes", "news_count", "enabled")
+    allowed = ("group_name", "subscriber_name", "services", "interval_minutes", "news_count", "enabled",
+               "rest_start", "rest_end")
     with _lock:
         subs = load_subs()
         for s in subs:
@@ -424,6 +427,12 @@ async def _tick_subs() -> None:
     changed = False
     for sub in subs:
         if not sub.get("enabled"):
+            continue
+        # 休息时段（安静时段）：跳过推送，但不更新 last_sent，
+        # 这样休息一结束立刻按间隔补推一次，不会把整段休息期积压的消息一次性全发。
+        if base.in_rest_window(now, sub.get("rest_start"), sub.get("rest_end")):
+            logger.info(f"外语订阅推送：群 {sub['group_id']} 处于休息时段"
+                        f"（{sub.get('rest_start')}~{sub.get('rest_end')}），跳过")
             continue
         pid = sub["platform_id"]
         if platforms.platform_of(pid) is None:
