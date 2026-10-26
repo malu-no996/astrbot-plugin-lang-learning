@@ -31,6 +31,16 @@ from .sources import (
 # 若以后某个语言在图片渲染上仍出问题，再把它加回这个集合走纯文字通道。
 TEXT_ONLY_LANGS: set[str] = set()
 
+# ---------------- 自动采集的三道闸 ----------------
+# ★ 不加这些会把整个进程拖垮（2026-10-26 实测确认）：
+#   单个分类失败要重试 3 次、每次超时 15~20 秒，一个境外不可达的源光「全部失败」就要
+#   跑 8~30 分钟；十几个源再串行跑完一轮要好几小时 —— 后台线程被占满、任务不断堆积，
+#   最终的表现就是「跑久了 bot 不响应、插件页面网络错误，只能重启」。
+COLLECT_CONCURRENCY = 3     # 同时采集的源数上限（别把线程池占满）
+COLLECT_TIMEOUT = 90        # 单个源的截止时间（秒）：到点就停，已抓到的照常落库
+ROUND_BUDGET = 420          # 单轮采集的总预算（秒）：超了剩下的等下一轮
+BODY_BUDGET = 60            # 抓正文一轮的总预算（秒）
+
 PUSH_FILE = NEWS_DIR / "news_push.json"
 # ---------------- 新闻推送规则（news_push.json） ----------------
 DEFAULT_NEWS_RULE = {
@@ -256,7 +266,13 @@ async def news_run_rule(rule_id: str, source: str = "auto", rule: dict | None = 
             except Exception as exc:
                 logger.warning(f"新闻正文抓取异常（{sid}）：{exc}")
                 bodies[it["id"]] = ""
-        await asyncio.gather(*[_one(it) for it in pick])
+        try:
+            # 正文抓取同样要有总闸：源站慢起来能把整轮推送无限拖住
+            await asyncio.wait_for(
+                asyncio.gather(*[_one(it) for it in pick]), timeout=BODY_BUDGET
+            )
+        except asyncio.TimeoutError:
+            logger.warning(f"新闻正文抓取超过 {BODY_BUDGET}s，本次先发已抓到的部分")
 
     res = await send_news_items(rule, pick, bodies, pid, rule.get("target_type"), tid)
     if res["ok"] == 0:
@@ -284,19 +300,48 @@ def _finish_news_rule(rule: dict, msg: str, ok: bool, now: float | None = None) 
 _running = False
 
 
+async def _collect_due(now: float) -> None:
+    """把到点的源采集一遍：**并发有上限 · 单源有截止时间 · 单轮有总预算**。
+
+    原来是「for 源: await to_thread(collect_now)」—— 串行等每个源跑完，一轮能拖到
+    几小时，中途谁卡住整条循环就再也不动了。这里改成三道闸，最坏情况也能在
+    `ROUND_BUDGET` 秒内把这轮收掉，剩下的下一轮再抓。
+    """
+    todo = []
+    for sid in SOURCES:
+        cfg = get_source_cfg(sid)
+        if (cfg.get("enabled") and cfg.get("auto_collect")
+                and now >= int(cfg.get("next_collect_at") or 0)):
+            todo.append(sid)
+    if not todo:
+        return
+
+    sem = asyncio.Semaphore(COLLECT_CONCURRENCY)
+
+    async def _one(sid: str) -> None:
+        async with sem:
+            try:
+                await asyncio.to_thread(
+                    collect_now, sid, time.monotonic() + COLLECT_TIMEOUT
+                )
+            except Exception as exc:      # noqa: BLE001
+                logger.warning(f"新闻自动采集异常（{sid}）：{exc}")
+
+    try:
+        await asyncio.wait_for(
+            asyncio.gather(*[_one(sid) for sid in todo]), timeout=ROUND_BUDGET
+        )
+    except asyncio.TimeoutError:
+        logger.warning(f"新闻采集本轮超过总预算 {ROUND_BUDGET}s，剩下的下一轮再抓")
+
+
 async def loop_forever() -> None:
     await asyncio.sleep(FIRST_DELAY)
     while True:
         try:
             now = time.time()
             # 1) 自动采集
-            for sid in SOURCES:
-                cfg = get_source_cfg(sid)
-                if cfg.get("enabled") and cfg.get("auto_collect") and now >= int(cfg.get("next_collect_at") or 0):
-                    try:
-                        await asyncio.to_thread(collect_now, sid)
-                    except Exception as exc:
-                        logger.warning(f"新闻自动采集异常（{sid}）：{exc}")
+            await _collect_due(now)
             # 2) 自动推送
             for r in news_due(now):
                 try:

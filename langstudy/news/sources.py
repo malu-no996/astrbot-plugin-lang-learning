@@ -545,7 +545,10 @@ def _register_bbc() -> None:
         "name": "BBC News（英语）",
         "lang": "en",
         "optional": False,
-        "default_enabled": True,
+        # ★ 境内不可达：运行日志里 feeds.bbci.co.uk 累计 2200+ 次
+        #   `WinError 10061`（目标主机主动拒绝），每次还要重试 3 遍 —— 白耗线程、
+        #   刷爆日志，实际一条也抓不到 → 默认关闭，需要走代理时再在面板打开。
+        "default_enabled": False,
         "categories": bbc_categories,
         "collect": _collect_bbc,
         "body": _bbc_body,
@@ -560,7 +563,8 @@ def _register_daum() -> None:
         "name": "Daum News（韩语）",
         "lang": "ko",
         "optional": False,
-        "default_enabled": True,
+        # ★ 境内不可达：v.daum.net 累计 1700+ 次抓取失败，同上 → 默认关闭。
+        "default_enabled": False,
         "categories": daum_categories,
         "collect": _collect_daum,
         "body": _daum_body,
@@ -575,7 +579,8 @@ def _register_khaosod() -> None:
         "name": "Khaosod（泰语）",
         "lang": "th",
         "optional": False,
-        "default_enabled": True,
+        # ★ 境内不稳定：www.khaosod.co.th 累计 200+ 次抓取失败 → 默认关闭。
+        "default_enabled": False,
         "categories": khaosod_categories,
         "collect": _collect_khaosod,
         # 泰语源 RSS 自带全文，正文在采集时已落库到 item["body"]；
@@ -589,7 +594,9 @@ def _register_asahi() -> None:
         return list(ASAHI_CATEGORIES)
     SOURCES["asahi_ja"] = {
         "id": "asahi_ja", "name": "朝日新聞（日语）", "lang": "ja",
-        "optional": False, "default_enabled": True,
+        # ★ 境内不可达：www.asahi.com 累计 1900+ 次 `[Errno 11001] getaddrinfo failed`
+        #   （DNS 解析失败）→ 默认关闭。
+        "optional": False, "default_enabled": False,
         "categories": asahi_categories,
         "collect": _collect_rdf("asahi_ja", ASAHI_RSS, dict(ASAHI_CATEGORIES).get),
         "body": _make_generic_body("asahi_ja"),
@@ -1038,20 +1045,39 @@ def save_cache(sid: str, items: list[dict]) -> None:
 
 
 # ---------------- 采集 ----------------
-def collect_now(sid: str) -> dict:
-    """立即采集某个源（同步；循环里用 asyncio.to_thread 包一层）。返回结果摘要。"""
+def collect_now(sid: str, deadline: float | None = None) -> dict:
+    """立即采集某个源（同步；循环里用 asyncio.to_thread 包一层）。返回结果摘要。
+
+    `deadline` = `time.monotonic()` 的截止时间。每抓完一个分类查一次，超了就停手，
+    **已抓到的照常落库**（半轮成果不丢）。
+
+    ★ 为什么必须有它：单个分类失败要重试 3 次、每次超时 15~20 秒，一个境外不可达的
+      源光是「全部失败」就要跑 8~30 分钟（日志实测 daum 一轮 10 分钟、BBC 一轮 8 分钟）；
+      十几个源再**串行**跑完一轮要好几小时。期间后台线程被占满、后续任务不断堆积，
+      最后整个进程像死了一样 —— 日志停更、定时任务不触发、WebUI 请求超时（前端只看到
+      「网络错误」），只能重启才能恢复。
+      所以这里必须是「采集自己到点收手」：不能靠 `asyncio.wait_for` 去取消，
+      wait_for 取消不掉线程里已经在跑的同步 HTTP，线程会继续挂着，反而越积越多。
+    """
     src = SOURCES.get(sid)
     if src is None:
         return {"ok": False, "message": f"未知新闻源：{sid}"}
     cfg = get_source_cfg(sid)
     cats = cfg.get("categories") or [c[0] for c in src["categories"]()]
     merged: dict[str, dict] = {}
+    done = 0
+    stopped = ""
     for cat_id in cats:
+        if deadline is not None and time.monotonic() > deadline:
+            stopped = f"（已抓 {done}/{len(cats)} 个分类，剩下的下一轮再抓）"
+            logger.warning(f"新闻采集到点停止（{sid}）{stopped}")
+            break
         try:
             for it in src["collect"](cat_id):
                 merged[it["id"]] = it
         except Exception as exc:
             logger.warning(f"新闻采集单分类异常（{sid}/{cat_id}）：{exc}")
+        done += 1
     items = list(merged.values())
     save_cache(sid, items)
     # 回写采集 meta 到配置
@@ -1065,7 +1091,7 @@ def collect_now(sid: str) -> dict:
     })
     cfgs[sid] = c
     save_source_cfgs(cfgs)
-    return {"ok": True, "count": len(items), "message": f"已采集 {len(items)} 条"}
+    return {"ok": True, "count": len(items), "message": f"已采集 {len(items)} 条{stopped}"}
 
 
 # 必须在 _collect_nhk / _collect_yahoo 定义之后调用，否则加载期 NameError。
